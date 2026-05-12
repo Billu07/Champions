@@ -54,6 +54,9 @@ npm run dev
 - `POST /api/jobs/generate-weekly-report`
 - `POST /api/broadcasts/preview`
 - `POST /api/broadcasts/send`
+- `GET/POST /api/test-schedules`
+- `DELETE /api/test-schedules/:id`
+- `POST /api/test-schedules/dispatch`
 
 ## 5. Import employee CSV
 

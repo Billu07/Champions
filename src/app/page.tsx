@@ -18,6 +18,10 @@ const cards = [
     title: "CEO Broadcast",
     text: "Targeted sends by member, tags, or mention-detected recipients with confirmation.",
   },
+  {
+    title: "Test Scheduler",
+    text: "Frontend queue for scheduling slot-template test sends to selected users.",
+  },
 ];
 
 export default async function HomePage() {
@@ -31,6 +35,7 @@ export default async function HomePage() {
           {loggedIn ? (
             <>
               <Link href="/employees">Employees</Link>
+              <Link href="/test-scheduler">Test Scheduler</Link>
               <Link href="/broadcasts">Broadcasts</Link>
               <Link href="/reports">Reports</Link>
             </>

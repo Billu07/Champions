@@ -1,0 +1,42 @@
+import { z } from "zod";
+import { fail, ok } from "@/lib/http";
+import { requestHasAdminSession } from "@/lib/auth";
+import { createTestSchedule, listTestSchedules } from "@/lib/test-scheduler";
+
+const createSchema = z.object({
+  slot: z.enum(["morning", "noon", "afternoon", "evening"]),
+  scheduledAtIso: z.string().datetime(),
+  recipientEmployeeIds: z.array(z.string().uuid()).min(1),
+});
+
+export async function GET(request: Request) {
+  if (!(await requestHasAdminSession(request))) {
+    return fail("Unauthorized", 401);
+  }
+
+  try {
+    const schedules = await listTestSchedules();
+    return ok({ schedules });
+  } catch (error) {
+    return fail((error as Error).message || "Failed to load test schedules", 500);
+  }
+}
+
+export async function POST(request: Request) {
+  if (!(await requestHasAdminSession(request))) {
+    return fail("Unauthorized", 401);
+  }
+
+  try {
+    const body = await request.json().catch(() => ({}));
+    const parsed = createSchema.safeParse(body);
+    if (!parsed.success) {
+      return fail(parsed.error.issues[0]?.message || "Invalid payload", 400);
+    }
+
+    const created = await createTestSchedule(parsed.data);
+    return ok({ created }, 201);
+  } catch (error) {
+    return fail((error as Error).message || "Failed to create test schedule", 500);
+  }
+}
