@@ -1,5 +1,6 @@
 import { env } from "@/lib/config";
-import { normalizeBangladeshPhone, whatsappRecipientFromE164 } from "@/lib/phone";
+import { whatsappRecipientFromE164 } from "@/lib/phone";
+import { isWhatsAppRecipientAllowed } from "@/lib/whatsapp-test-allowlist";
 
 type SendTemplateInput = {
   toE164: string;
@@ -28,19 +29,10 @@ type SendTextInput = {
 
 const baseUrl = `https://graph.facebook.com/v25.0/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
 
-const testAllowlist = new Set(
-  env.WHATSAPP_TEST_ALLOWLIST_E164.split(",")
-    .map((item) => normalizeBangladeshPhone(item.trim()))
-    .filter(Boolean),
-);
-
 function assertRecipientAllowed(toE164: string): void {
-  if (testAllowlist.size === 0) return;
-
-  const normalized = normalizeBangladeshPhone(toE164);
-  if (!testAllowlist.has(normalized)) {
+  if (!isWhatsAppRecipientAllowed(toE164)) {
     throw new Error(
-      `Blocked by WHATSAPP_TEST_ALLOWLIST_E164: ${normalized} is not in the allowed test recipients`,
+      `Blocked by WHATSAPP_TEST_ALLOWLIST_E164: ${toE164} is not in the allowed test recipients`,
     );
   }
 }

@@ -15,6 +15,7 @@ import {
   mergeSlotResponse,
 } from "@/lib/repository";
 import { sendDynamicTemplateMessage } from "@/lib/whatsapp";
+import { filterAllowedEmployees, isWhatsAppTestAllowlistEnabled } from "@/lib/whatsapp-test-allowlist";
 
 function isWorkingDay(date: Date): boolean {
   const name = dhakaDayName(date, env.NEXT_PUBLIC_APP_TIMEZONE);
@@ -95,7 +96,8 @@ export async function runScheduledSlot(slot: SlotKey, now = new Date()) {
       return { skipped: true, reason: "non_working_day" as const };
     }
 
-    const employees = await getTrackedEmployees();
+    const trackedEmployees = await getTrackedEmployees();
+    const employees = filterAllowedEmployees(trackedEmployees);
     const previous = previousSlot(slot);
     const previousDate = previous.dateOffsetDays === 0
       ? trackingDate
@@ -151,7 +153,8 @@ export async function runScheduledSlot(slot: SlotKey, now = new Date()) {
       }
     }
 
-    await completeJobRun(jobKey, "success", `sent=${sent},failed=${failed}`);
+    const testNote = isWhatsAppTestAllowlistEnabled() ? `,test_allowlist=${employees.length}` : "";
+    await completeJobRun(jobKey, "success", `sent=${sent},failed=${failed}${testNote}`);
     return { skipped: false, sent, failed };
   } catch (error) {
     await completeJobRun(jobKey, "failed", (error as Error).message);
