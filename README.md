@@ -27,6 +27,8 @@ copy .env.example .env.local
 ```
 
 3. Fill required values in `.env.local`.
+   - For safe testing, set `WHATSAPP_TEST_ALLOWLIST_E164` as comma-separated E.164 numbers.
+   - Example: `WHATSAPP_TEST_ALLOWLIST_E164=+8801683088612,+8801690000732`
 
 4. Push Supabase migrations:
 ```bash

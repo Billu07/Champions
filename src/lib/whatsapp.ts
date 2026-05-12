@@ -1,5 +1,5 @@
-﻿import { env } from "@/lib/config";
-import { whatsappRecipientFromE164 } from "@/lib/phone";
+import { env } from "@/lib/config";
+import { normalizeBangladeshPhone, whatsappRecipientFromE164 } from "@/lib/phone";
 
 type SendTemplateInput = {
   toE164: string;
@@ -27,6 +27,23 @@ type SendTextInput = {
 };
 
 const baseUrl = `https://graph.facebook.com/v25.0/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
+
+const testAllowlist = new Set(
+  env.WHATSAPP_TEST_ALLOWLIST_E164.split(",")
+    .map((item) => normalizeBangladeshPhone(item.trim()))
+    .filter(Boolean),
+);
+
+function assertRecipientAllowed(toE164: string): void {
+  if (testAllowlist.size === 0) return;
+
+  const normalized = normalizeBangladeshPhone(toE164);
+  if (!testAllowlist.has(normalized)) {
+    throw new Error(
+      `Blocked by WHATSAPP_TEST_ALLOWLIST_E164: ${normalized} is not in the allowed test recipients`,
+    );
+  }
+}
 
 async function send(body: Record<string, unknown>): Promise<{ id?: string }> {
   const response = await fetch(baseUrl, {
@@ -66,6 +83,8 @@ export async function sendTemplateMessage(input: SendTemplateInput): Promise<{ i
 }
 
 export async function sendDynamicTemplateMessage(input: SendDynamicTemplateInput): Promise<{ id?: string }> {
+  assertRecipientAllowed(input.toE164);
+
   const components =
     input.bodyParameters && input.bodyParameters.length > 0
       ? [
@@ -96,6 +115,8 @@ export async function sendDynamicTemplateMessage(input: SendDynamicTemplateInput
 }
 
 export async function sendTextMessage(input: SendTextInput): Promise<{ id?: string }> {
+  assertRecipientAllowed(input.toE164);
+
   return send({
     messaging_product: "whatsapp",
     recipient_type: "individual",
