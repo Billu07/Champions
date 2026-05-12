@@ -58,30 +58,170 @@ function ensureNoError(error: { message: string } | null, fallback: string): voi
   }
 }
 
-export async function listEmployees() {
-  const employeeRes = await supabaseAdmin
-    .from("employees")
-    .select("id,full_name,designation,department,branch,whatsapp_number_raw,whatsapp_e164,tracking_enabled,is_active,status,aliases,notes")
-    .order("full_name", { ascending: true });
+type EmployeesSchemaMode = "modern" | "legacy";
 
-  ensureNoError(employeeRes.error, "Failed to load employees");
+const MODERN_EMPLOYEE_SELECT =
+  "id,full_name,designation,department,branch,whatsapp_number_raw,whatsapp_e164,tracking_enabled,is_active,status,aliases,notes";
+const LEGACY_EMPLOYEE_SELECT =
+  "id,full_name,designation,department,branch,whatsapp_number,is_active_for_tracking,status,created_at,updated_at";
 
-  const tagRes = await supabaseAdmin
-    .from("employee_tags")
-    .select("employee_id, tags!inner(key,label)");
+let cachedEmployeeSchema: EmployeesSchemaMode | null = null;
+let cachedTagSupport: boolean | null = null;
 
-  ensureNoError(tagRes.error, "Failed to load employee tags");
+function isMissingColumnOrTableError(error: { message?: string } | null | undefined): boolean {
+  if (!error?.message) return false;
+  const text = error.message.toLowerCase();
+  return (
+    text.includes("could not find") ||
+    text.includes("schema cache") ||
+    text.includes("column") ||
+    text.includes("relation") ||
+    text.includes("does not exist")
+  );
+}
 
-  const tagsByEmployee = new Map<string, { key: string; label: string }[]>();
+function isActiveStatus(status: string | null | undefined): boolean {
+  const normalized = String(status || "Active").trim().toLowerCase();
+  return !["inactive", "resigned", "terminated", "terminate", "deactivated"].includes(normalized);
+}
 
-  for (const row of (tagRes.data ?? []) as EmployeeTagRow[]) {
-    const list = tagsByEmployee.get(row.employee_id) ?? [];
-    const tags = Array.isArray(row.tags) ? row.tags : row.tags ? [row.tags] : [];
-    list.push(...tags);
-    tagsByEmployee.set(row.employee_id, list);
+function normalizeModernEmployee(row: Record<string, unknown>): EmployeeRow {
+  const raw = String(row.whatsapp_number_raw ?? "");
+  const e164 = String(row.whatsapp_e164 ?? "") || normalizeBangladeshPhone(raw);
+  const aliases = Array.isArray(row.aliases)
+    ? row.aliases.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+
+  return {
+    id: String(row.id),
+    full_name: String(row.full_name ?? ""),
+    designation: row.designation ? String(row.designation) : null,
+    department: row.department ? String(row.department) : null,
+    branch: row.branch ? String(row.branch) : null,
+    whatsapp_number_raw: raw,
+    whatsapp_e164: e164,
+    tracking_enabled: Boolean(row.tracking_enabled),
+    is_active: Boolean(row.is_active),
+    status: String(row.status ?? "Active"),
+    aliases,
+    notes: row.notes ? String(row.notes) : null,
+  };
+}
+
+function normalizeLegacyEmployee(row: Record<string, unknown>): EmployeeRow {
+  const whatsappRaw = String(row.whatsapp_number ?? "");
+  const normalized = normalizeBangladeshPhone(whatsappRaw);
+  const status = String(row.status ?? "Active");
+
+  return {
+    id: String(row.id),
+    full_name: String(row.full_name ?? ""),
+    designation: row.designation ? String(row.designation) : null,
+    department: row.department ? String(row.department) : null,
+    branch: row.branch ? String(row.branch) : null,
+    whatsapp_number_raw: whatsappRaw,
+    whatsapp_e164: normalized,
+    tracking_enabled: Boolean(row.is_active_for_tracking),
+    is_active: isActiveStatus(status),
+    status,
+    aliases: [],
+    notes: null,
+  };
+}
+
+async function getEmployeesSchemaMode(): Promise<EmployeesSchemaMode> {
+  if (cachedEmployeeSchema) return cachedEmployeeSchema;
+
+  const probe = await supabaseAdmin.from("employees").select("whatsapp_e164").limit(1);
+  if (!probe.error) {
+    cachedEmployeeSchema = "modern";
+    return cachedEmployeeSchema;
   }
 
-  return ((employeeRes.data ?? []) as EmployeeRow[]).map((employee) => ({
+  if (isMissingColumnOrTableError(probe.error)) {
+    cachedEmployeeSchema = "legacy";
+    return cachedEmployeeSchema;
+  }
+
+  throw new Error(probe.error.message || "Failed to detect employees schema mode");
+}
+
+async function hasTagTables(): Promise<boolean> {
+  if (cachedTagSupport !== null) return cachedTagSupport;
+
+  const probe = await supabaseAdmin.from("employee_tags").select("employee_id").limit(1);
+  if (!probe.error) {
+    cachedTagSupport = true;
+    return true;
+  }
+
+  if (isMissingColumnOrTableError(probe.error)) {
+    cachedTagSupport = false;
+    return false;
+  }
+
+  cachedTagSupport = false;
+  return false;
+}
+
+async function fetchEmployees(options?: {
+  ids?: string[];
+  activeOnly?: boolean;
+  trackingOnly?: boolean;
+  orderByName?: boolean;
+}): Promise<EmployeeRow[]> {
+  const schema = await getEmployeesSchemaMode();
+  const ids = options?.ids ?? [];
+  const activeOnly = options?.activeOnly ?? false;
+  const trackingOnly = options?.trackingOnly ?? false;
+  const orderByName = options?.orderByName ?? false;
+
+  if (schema === "modern") {
+    let query = supabaseAdmin.from("employees").select(MODERN_EMPLOYEE_SELECT);
+    if (ids.length > 0) query = query.in("id", ids);
+    if (activeOnly) query = query.eq("is_active", true);
+    if (trackingOnly) query = query.eq("tracking_enabled", true);
+    if (orderByName) query = query.order("full_name", { ascending: true });
+
+    const res = await query;
+    ensureNoError(res.error, "Failed to load employees");
+    return ((res.data ?? []) as Record<string, unknown>[]).map(normalizeModernEmployee);
+  }
+
+  let query = supabaseAdmin.from("employees").select(LEGACY_EMPLOYEE_SELECT);
+  if (ids.length > 0) query = query.in("id", ids);
+  if (trackingOnly) query = query.eq("is_active_for_tracking", true);
+  if (orderByName) query = query.order("full_name", { ascending: true });
+
+  const res = await query;
+  ensureNoError(res.error, "Failed to load employees");
+
+  let mapped = ((res.data ?? []) as Record<string, unknown>[]).map(normalizeLegacyEmployee);
+  if (activeOnly) mapped = mapped.filter((row) => row.is_active);
+  if (trackingOnly) mapped = mapped.filter((row) => row.tracking_enabled);
+  return mapped;
+}
+
+export async function listEmployees() {
+  const employees = await fetchEmployees({ orderByName: true });
+  const tagsByEmployee = new Map<string, { key: string; label: string }[]>();
+
+  if (await hasTagTables()) {
+    const tagRes = await supabaseAdmin
+      .from("employee_tags")
+      .select("employee_id, tags!inner(key,label)");
+
+    if (!tagRes.error) {
+      for (const row of (tagRes.data ?? []) as EmployeeTagRow[]) {
+        const list = tagsByEmployee.get(row.employee_id) ?? [];
+        const tags = Array.isArray(row.tags) ? row.tags : row.tags ? [row.tags] : [];
+        list.push(...tags);
+        tagsByEmployee.set(row.employee_id, list);
+      }
+    }
+  }
+
+  return employees.map((employee) => ({
     ...employee,
     tags: tagsByEmployee.get(employee.id) ?? [],
   }));
@@ -92,6 +232,15 @@ export async function listTags() {
     .from("tags")
     .select("id,key,label")
     .order("label", { ascending: true });
+
+  if (res.error && isMissingColumnOrTableError(res.error)) {
+    return [
+      { id: "sales_field", key: "sales_field", label: "Sales Field" },
+      { id: "head_office", key: "head_office", label: "Head Office" },
+      { id: "drivers", key: "drivers", label: "Drivers" },
+      { id: "transport_manager", key: "transport_manager", label: "Transport Manager" },
+    ];
+  }
 
   ensureNoError(res.error, "Failed to load tags");
   return res.data ?? [];
@@ -116,32 +265,53 @@ export async function upsertTag(tag: { key: string; label: string }) {
 
 export async function upsertEmployee(input: UpsertEmployeeInput) {
   const normalized = normalizeBangladeshPhone(input.whatsappNumber);
+  const schema = await getEmployeesSchemaMode();
 
-  const payload = {
-    id: input.id,
-    full_name: input.fullName.trim(),
-    designation: input.designation?.trim() || null,
-    department: input.department?.trim() || null,
-    branch: input.branch?.trim() || null,
-    whatsapp_number_raw: input.whatsappNumber,
-    whatsapp_e164: normalized,
-    tracking_enabled: input.trackingEnabled,
-    is_active: input.isActive,
-    status: input.status?.trim() || "Active",
-    aliases: input.aliases?.map((item) => item.trim()).filter(Boolean) ?? [],
-    notes: input.notes?.trim() || null,
-  };
+  let res;
+  if (schema === "modern") {
+    const payload = {
+      id: input.id,
+      full_name: input.fullName.trim(),
+      designation: input.designation?.trim() || null,
+      department: input.department?.trim() || null,
+      branch: input.branch?.trim() || null,
+      whatsapp_number_raw: input.whatsappNumber,
+      whatsapp_e164: normalized,
+      tracking_enabled: input.trackingEnabled,
+      is_active: input.isActive,
+      status: input.status?.trim() || "Active",
+      aliases: input.aliases?.map((item) => item.trim()).filter(Boolean) ?? [],
+      notes: input.notes?.trim() || null,
+    };
 
-  const res = await supabaseAdmin
-    .from("employees")
-    .upsert(payload, { onConflict: "whatsapp_e164" })
-    .select("id")
-    .single();
+    res = await supabaseAdmin
+      .from("employees")
+      .upsert(payload, { onConflict: "whatsapp_e164" })
+      .select("id")
+      .single();
+  } else {
+    const payload = {
+      id: input.id,
+      full_name: input.fullName.trim(),
+      designation: input.designation?.trim() || null,
+      department: input.department?.trim() || null,
+      branch: input.branch?.trim() || null,
+      whatsapp_number: normalized.replace(/^\+/, ""),
+      is_active_for_tracking: input.trackingEnabled,
+      status: input.isActive ? (input.status?.trim() || "Active") : "Inactive",
+    };
+
+    res = await supabaseAdmin
+      .from("employees")
+      .upsert(payload, { onConflict: "whatsapp_number" })
+      .select("id")
+      .single();
+  }
 
   ensureNoError(res.error, "Failed to upsert employee");
   const employeeId = must(res.data?.id, "Employee id missing after upsert");
 
-  if (input.tagKeys) {
+  if (input.tagKeys && (await hasTagTables())) {
     await supabaseAdmin.from("employee_tags").delete().eq("employee_id", employeeId);
 
     if (input.tagKeys.length > 0) {
@@ -155,6 +325,14 @@ export async function upsertEmployee(input: UpsertEmployeeInput) {
 }
 
 export async function getTrackedEmployees(): Promise<EmployeeRow[]> {
+  if (!(await hasTagTables())) {
+    return fetchEmployees({
+      trackingOnly: true,
+      activeOnly: true,
+      orderByName: true,
+    });
+  }
+
   const tagged = await supabaseAdmin
     .from("employee_tags")
     .select("employee_id")
@@ -165,16 +343,12 @@ export async function getTrackedEmployees(): Promise<EmployeeRow[]> {
   const ids = (tagged.data ?? []).map((row) => row.employee_id as string);
   if (ids.length === 0) return [];
 
-  const res = await supabaseAdmin
-    .from("employees")
-    .select("id,full_name,designation,department,branch,whatsapp_number_raw,whatsapp_e164,tracking_enabled,is_active,status,aliases,notes")
-    .in("id", ids)
-    .eq("is_active", true)
-    .eq("tracking_enabled", true)
-    .order("full_name", { ascending: true });
-
-  ensureNoError(res.error, "Failed to load tracked employees");
-  return (res.data ?? []) as EmployeeRow[];
+  return fetchEmployees({
+    ids,
+    trackingOnly: true,
+    activeOnly: true,
+    orderByName: true,
+  });
 }
 
 export async function getTemplateBySlot(slotKey: SlotKey): Promise<{
@@ -195,19 +369,12 @@ export async function getTemplateBySlot(slotKey: SlotKey): Promise<{
 
 export async function getEmployeesByIds(ids: string[]): Promise<EmployeeRow[]> {
   if (ids.length === 0) return [];
-
-  const res = await supabaseAdmin
-    .from("employees")
-    .select("id,full_name,designation,department,branch,whatsapp_number_raw,whatsapp_e164,tracking_enabled,is_active,status,aliases,notes")
-    .in("id", ids)
-    .eq("is_active", true);
-
-  ensureNoError(res.error, "Failed to get employees by ids");
-  return (res.data ?? []) as EmployeeRow[];
+  return fetchEmployees({ ids, activeOnly: true });
 }
 
 export async function getEmployeesByTagKeys(tagKeys: string[]): Promise<EmployeeRow[]> {
   if (tagKeys.length === 0) return [];
+  if (!(await hasTagTables())) return [];
 
   const mapRes = await supabaseAdmin
     .from("employee_tags")
@@ -222,15 +389,32 @@ export async function getEmployeesByTagKeys(tagKeys: string[]): Promise<Employee
 
 export async function findEmployeeByWhatsAppFrom(fromValue: string): Promise<EmployeeRow | null> {
   const normalized = normalizeBangladeshPhone(fromValue);
+  const schema = await getEmployeesSchemaMode();
+
+  if (schema === "modern") {
+    const res = await supabaseAdmin
+      .from("employees")
+      .select(MODERN_EMPLOYEE_SELECT)
+      .eq("whatsapp_e164", normalized)
+      .maybeSingle();
+
+    ensureNoError(res.error, "Failed to find employee by WhatsApp");
+    return res.data ? normalizeModernEmployee(res.data as Record<string, unknown>) : null;
+  }
+
+  const digits = normalized.replace(/^\+/, "");
+  const local = digits.startsWith("880") && digits.length >= 13 ? `0${digits.slice(3, 13)}` : digits;
+  const candidates = Array.from(new Set([digits, local, String(fromValue).replace(/\D+/g, "")])).filter(Boolean);
 
   const res = await supabaseAdmin
     .from("employees")
-    .select("id,full_name,designation,department,branch,whatsapp_number_raw,whatsapp_e164,tracking_enabled,is_active,status,aliases,notes")
-    .eq("whatsapp_e164", normalized)
+    .select(LEGACY_EMPLOYEE_SELECT)
+    .in("whatsapp_number", candidates)
+    .limit(1)
     .maybeSingle();
 
   ensureNoError(res.error, "Failed to find employee by WhatsApp");
-  return (res.data as EmployeeRow | null) ?? null;
+  return res.data ? normalizeLegacyEmployee(res.data as Record<string, unknown>) : null;
 }
 
 export async function insertMessageEvent(input: {

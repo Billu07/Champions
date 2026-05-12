@@ -11,6 +11,7 @@ type SendTemplateInput = {
 type TemplateParam = {
   type: "text";
   text: string;
+  parameterName?: string;
 };
 
 type SendDynamicTemplateInput = {
@@ -58,6 +59,7 @@ export async function sendTemplateMessage(input: SendTemplateInput): Promise<{ i
       {
         type: "text",
         text: input.employeeName,
+        parameterName: "employee_name",
       },
     ],
   });
@@ -69,7 +71,11 @@ export async function sendDynamicTemplateMessage(input: SendDynamicTemplateInput
       ? [
           {
             type: "body",
-            parameters: input.bodyParameters.map((item) => ({ type: "text", text: item.text })),
+            parameters: input.bodyParameters.map((item) => ({
+              type: "text",
+              text: item.text,
+              ...(item.parameterName ? { parameter_name: item.parameterName } : {}),
+            })),
           },
         ]
       : [];

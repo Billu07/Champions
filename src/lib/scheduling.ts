@@ -14,7 +14,7 @@ import {
   markMissingForSlot,
   mergeSlotResponse,
 } from "@/lib/repository";
-import { sendTemplateMessage } from "@/lib/whatsapp";
+import { sendDynamicTemplateMessage } from "@/lib/whatsapp";
 
 function isWorkingDay(date: Date): boolean {
   const name = dhakaDayName(date, env.NEXT_PUBLIC_APP_TIMEZONE);
@@ -61,6 +61,25 @@ function extractMessages(payload: Record<string, unknown>): WhatsAppInboundMessa
   return messages;
 }
 
+function scheduledBodyParameters(slot: SlotKey, employeeName: string): Array<{
+  type: "text";
+  text: string;
+  parameterName: string;
+}> {
+  if (slot === "morning") {
+    return [
+      { type: "text", parameterName: "employee_name", text: employeeName },
+      {
+        type: "text",
+        parameterName: "body",
+        text: "আজকের দিনটি আত্মবিশ্বাস, ফোকাস ও পেশাদারিত্বের সাথে শুরু করুন।",
+      },
+    ];
+  }
+
+  return [{ type: "text", parameterName: "employee_name", text: employeeName }];
+}
+
 export async function runScheduledSlot(slot: SlotKey, now = new Date()) {
   const trackingDate = dhakaDateISO(now, env.NEXT_PUBLIC_APP_TIMEZONE);
   const dayName = dhakaDayName(now, env.NEXT_PUBLIC_APP_TIMEZONE);
@@ -98,11 +117,11 @@ export async function runScheduledSlot(slot: SlotKey, now = new Date()) {
 
     for (const employee of employees) {
       try {
-        const response = await sendTemplateMessage({
+        const response = await sendDynamicTemplateMessage({
           toE164: employee.whatsapp_e164,
           templateName: template.template_name,
-          employeeName: employee.full_name,
           languageCode: template.language_code,
+          bodyParameters: scheduledBodyParameters(slot, employee.full_name),
         });
 
         await insertMessageEvent({

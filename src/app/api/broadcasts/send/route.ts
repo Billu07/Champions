@@ -37,7 +37,7 @@ async function sendWithTemplateFirstPolicy(toE164: string, finalMessage: string)
       toE164,
       templateName: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
       languageCode: "en",
-      bodyParameters: [{ type: "text", text: finalMessage.slice(0, 1000) }],
+      bodyParameters: [{ type: "text", parameterName: "body", text: finalMessage.slice(0, 1000) }],
     });
 
     return { mode: "template_fallback" as const, id: templated.id ?? null };
