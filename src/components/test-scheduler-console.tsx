@@ -3,6 +3,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { SlotKey } from "@/lib/types";
 
+type TemplateKey = SlotKey | "ceo_broadcast_test";
+
 type Employee = {
   id: string;
   full_name: string;
@@ -19,7 +21,7 @@ type Schedule = {
   jobKey: string;
   status: "running" | "success" | "failed";
   note: string | null;
-  slot: SlotKey | null;
+  templateKey: TemplateKey | null;
   scheduledAtIso: string | null;
   createdAt: string;
   finishedAt: string | null;
@@ -49,11 +51,12 @@ type TestSchedulerConsoleProps = {
   defaultMorningBodyText: string;
 };
 
-const slotOptions: Array<{ key: SlotKey; label: string }> = [
+const templateOptions: Array<{ key: TemplateKey; label: string }> = [
   { key: "morning", label: "Morning" },
   { key: "noon", label: "Noon" },
   { key: "afternoon", label: "Afternoon" },
   { key: "evening", label: "Evening" },
+  { key: "ceo_broadcast_test", label: "CEO Broadcast Test" },
 ];
 
 function pad(num: number): string {
@@ -86,7 +89,7 @@ export function TestSchedulerConsole({
   const [employees] = useState<Employee[]>(initialEmployees);
   const [schedules, setSchedules] = useState<Schedule[]>(initialSchedules);
 
-  const [slot, setSlot] = useState<SlotKey>("morning");
+  const [templateKey, setTemplateKey] = useState<TemplateKey>("morning");
   const [scheduledAtLocal, setScheduledAtLocal] = useState(defaultScheduleInput());
   const [morningBodyText, setMorningBodyText] = useState(defaultMorningBodyText);
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>(
@@ -168,7 +171,7 @@ export function TestSchedulerConsole({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        slot,
+        templateKey,
         scheduledAtIso: scheduledDate.toISOString(),
         recipientEmployeeIds: selectedEmployeeIds,
         morningBodyText,
@@ -221,9 +224,9 @@ export function TestSchedulerConsole({
         <form className="grid" onSubmit={onCreateSchedule}>
           <div className="row">
             <label className="col-4 grid" style={{ gap: 6 }}>
-              <span>Slot</span>
-              <select value={slot} onChange={(event) => setSlot(event.target.value as SlotKey)}>
-                {slotOptions.map((option) => (
+              <span>Template Slot</span>
+              <select value={templateKey} onChange={(event) => setTemplateKey(event.target.value as TemplateKey)}>
+                {templateOptions.map((option) => (
                   <option key={option.key} value={option.key}>
                     {option.label}
                   </option>
@@ -261,9 +264,13 @@ export function TestSchedulerConsole({
             </div>
           </div>
 
-          {slot === "morning" ? (
+          {templateKey === "morning" || templateKey === "ceo_broadcast_test" ? (
             <label className="grid" style={{ gap: 6 }}>
-              <span>Morning Template `{"{{body}}"}` Text</span>
+              <span>
+                {templateKey === "ceo_broadcast_test"
+                  ? "CEO Broadcast Template `{{body}}` Text"
+                  : "Morning Template `{{body}}` Text"}
+              </span>
               <textarea
                 value={morningBodyText}
                 onChange={(event) => setMorningBodyText(event.target.value)}
@@ -375,7 +382,7 @@ export function TestSchedulerConsole({
                 schedules.map((item) => (
                   <tr key={item.id}>
                     <td>{toDisplayDate(item.scheduledAtIso)}</td>
-                    <td>{item.slot || "-"}</td>
+                    <td>{item.templateKey || "-"}</td>
                     <td>
                       {item.recipients.length
                         ? item.recipients.map((row) => row.full_name).join(", ")

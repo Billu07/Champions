@@ -4,7 +4,7 @@ import { requestHasAdminSession } from "@/lib/auth";
 import { createTestSchedule, listTestSchedules } from "@/lib/test-scheduler";
 
 const createSchema = z.object({
-  slot: z.enum(["morning", "noon", "afternoon", "evening"]),
+  templateKey: z.enum(["morning", "noon", "afternoon", "evening", "ceo_broadcast_test"]),
   scheduledAtIso: z.string().datetime(),
   recipientEmployeeIds: z.array(z.string().uuid()).min(1),
   morningBodyText: z.string().max(1500).optional().default(""),

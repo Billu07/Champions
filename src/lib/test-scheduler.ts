@@ -15,9 +15,10 @@ import { sendDynamicTemplateMessage } from "@/lib/whatsapp";
 import { filterAllowedEmployees } from "@/lib/whatsapp-test-allowlist";
 
 const TEST_SCHEDULE_JOB_TYPE = "test_scheduled_send";
+const templateKeySchema = z.enum(["morning", "noon", "afternoon", "evening", "ceo_broadcast_test"]);
 
 const schedulePayloadSchema = z.object({
-  slot: z.enum(["morning", "noon", "afternoon", "evening"]),
+  templateKey: templateKeySchema,
   scheduledAtIso: z.string().datetime(),
   recipientEmployeeIds: z.array(z.string().uuid()).min(1).max(200),
   morningBodyText: z.string().max(1500).optional().default(""),
@@ -25,12 +26,13 @@ const schedulePayloadSchema = z.object({
 });
 
 const scheduleCreateInputSchema = z.object({
-  slot: z.enum(["morning", "noon", "afternoon", "evening"]),
+  templateKey: templateKeySchema,
   scheduledAtIso: z.string().datetime(),
   recipientEmployeeIds: z.array(z.string().uuid()).min(1).max(200),
   morningBodyText: z.string().max(1500).optional().default(""),
 });
 
+type TemplateKey = z.infer<typeof templateKeySchema>;
 type SchedulePayload = z.infer<typeof schedulePayloadSchema>;
 type ScheduleCreateInput = z.infer<typeof scheduleCreateInputSchema>;
 
@@ -55,7 +57,7 @@ export type TestScheduleItem = {
   jobKey: string;
   status: "running" | "success" | "failed";
   note: string | null;
-  slot: SlotKey | null;
+  templateKey: TemplateKey | null;
   scheduledAtIso: string | null;
   createdAt: string;
   finishedAt: string | null;
@@ -100,7 +102,7 @@ function scheduleToItem(row: JobRunRow, employeesById: Map<string, EmployeeLite>
     jobKey: row.job_key,
     status: row.status,
     note: row.note,
-    slot: payload?.slot ?? null,
+    templateKey: payload?.templateKey ?? null,
     scheduledAtIso: payload?.scheduledAtIso ?? null,
     createdAt: row.created_at,
     finishedAt: row.finished_at,
@@ -159,7 +161,7 @@ export async function createTestSchedule(input: ScheduleCreateInput) {
   }
 
   const payload: SchedulePayload = {
-    slot: parsed.data.slot,
+    templateKey: parsed.data.templateKey,
     scheduledAtIso: new Date(scheduledAtMs).toISOString(),
     recipientEmployeeIds: validIds,
     morningBodyText: parsed.data.morningBodyText ?? "",
@@ -252,38 +254,55 @@ async function executeDueSchedule(
     return { sent: 0, failed: 0, skipped: 1 };
   }
 
-  const template = await getTemplateBySlot(payload.slot);
+  let sent = 0;
+  let failed = 0;
+  const trackingDate = dhakaDateISO(now, env.NEXT_PUBLIC_APP_TIMEZONE);
+  const isCeoBroadcastTest = payload.templateKey === "ceo_broadcast_test";
+
+  const template = isCeoBroadcastTest
+    ? {
+        template_name: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
+        language_code: "en",
+      }
+    : await getTemplateBySlot(payload.templateKey as SlotKey);
+
   if (!template) {
     await updateJobRunCompletion({
       id: row.id,
       status: "failed",
-      note: `No active template configured for slot ${payload.slot}`,
+      note: `No active template configured for key ${payload.templateKey}`,
     });
     return { sent: 0, failed: recipients.length, skipped: 0 };
   }
 
-  let sent = 0;
-  let failed = 0;
-  const trackingDate = dhakaDateISO(now, env.NEXT_PUBLIC_APP_TIMEZONE);
-
   for (const employee of recipients) {
     try {
+      const bodyParameters = isCeoBroadcastTest
+        ? [
+            {
+              type: "text" as const,
+              parameterName: "body",
+              text: payload.morningBodyText || env.WHATSAPP_MORNING_TEMPLATE_BODY,
+            },
+          ]
+        : scheduledBodyParameters(
+            payload.templateKey as SlotKey,
+            employee.full_name,
+            payload.morningBodyText || env.WHATSAPP_MORNING_TEMPLATE_BODY,
+          );
+
       const response = await sendDynamicTemplateMessage({
         toE164: employee.whatsapp_e164,
         templateName: template.template_name,
         languageCode: template.language_code,
-        bodyParameters: scheduledBodyParameters(
-          payload.slot,
-          employee.full_name,
-          payload.morningBodyText || env.WHATSAPP_MORNING_TEMPLATE_BODY,
-        ),
+        bodyParameters,
       });
 
       await insertMessageEvent({
         employeeId: employee.id,
         direction: "outbound",
-        category: "scheduled_test_prompt",
-        slotKey: payload.slot,
+        category: isCeoBroadcastTest ? "scheduled_test_ceo_broadcast" : "scheduled_test_prompt",
+        slotKey: isCeoBroadcastTest ? null : (payload.templateKey as SlotKey),
         trackingDate,
         whatsappMessageId: response.id ?? null,
         payload: {
@@ -292,10 +311,12 @@ async function executeDueSchedule(
           scheduledAt: payload.scheduledAtIso,
           template: template.template_name,
           language: template.language_code,
-          slot: payload.slot,
+          templateKey: payload.templateKey,
           mode: "test_scheduler_frontend",
         },
-        messageText: `[template] ${template.template_name}`,
+        messageText: isCeoBroadcastTest
+          ? payload.morningBodyText || env.WHATSAPP_MORNING_TEMPLATE_BODY
+          : `[template] ${template.template_name}`,
       });
 
       sent += 1;
@@ -304,7 +325,7 @@ async function executeDueSchedule(
       logError("Test schedule send failed", {
         scheduleId: row.id,
         employeeId: employee.id,
-        slot: payload.slot,
+        templateKey: payload.templateKey,
         error: (error as Error).message,
       });
     }
@@ -314,7 +335,7 @@ async function executeDueSchedule(
   await updateJobRunCompletion({
     id: row.id,
     status,
-    note: `slot=${payload.slot};scheduled=${payload.scheduledAtIso};recipients=${recipients.length};sent=${sent};failed=${failed}`,
+    note: `template=${payload.templateKey};scheduled=${payload.scheduledAtIso};recipients=${recipients.length};sent=${sent};failed=${failed}`,
   });
 
   return { sent, failed, skipped: 0 };
