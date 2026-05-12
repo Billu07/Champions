@@ -9,3 +9,4 @@ coverage
 tsconfig.tsbuildinfo
 .vercel
 Team info.xlsx
+supabase/seed/employees.teaminfo.csv
