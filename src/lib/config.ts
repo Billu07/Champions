@@ -1,0 +1,33 @@
+﻿import { z } from "zod";
+
+const envSchema = z.object({
+  NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().min(1),
+  WHATSAPP_ACCESS_TOKEN: z.string().min(1),
+  WHATSAPP_VERIFY_TOKEN: z.string().min(1),
+  WHATSAPP_APP_SECRET: z.string().min(1),
+  WHATSAPP_BROADCAST_TEMPLATE_NAME: z.string().default("ceo_broadcast_generic"),
+  CRON_JOB_SECRET: z.string().min(1),
+  GEMINI_API_KEY: z.string().min(1),
+  GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
+  NEXT_PUBLIC_APP_TIMEZONE: z.string().default("Asia/Dhaka"),
+  CEO_PANEL_PASSWORD: z.string().min(1),
+});
+
+export const env = envSchema.parse({
+  NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID,
+  WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN,
+  WHATSAPP_VERIFY_TOKEN: process.env.WHATSAPP_VERIFY_TOKEN,
+  WHATSAPP_APP_SECRET: process.env.WHATSAPP_APP_SECRET,
+  WHATSAPP_BROADCAST_TEMPLATE_NAME: process.env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
+  CRON_JOB_SECRET: process.env.CRON_JOB_SECRET,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+  GEMINI_MODEL: process.env.GEMINI_MODEL,
+  NEXT_PUBLIC_APP_TIMEZONE: process.env.NEXT_PUBLIC_APP_TIMEZONE,
+  CEO_PANEL_PASSWORD: process.env.CEO_PANEL_PASSWORD,
+});

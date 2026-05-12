@@ -1,0 +1,342 @@
+{
+  "name": "Champions - Capture Reply",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "messages"
+        ],
+        "options": {}
+      },
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1424,
+        -464
+      ],
+      "id": "3c524dbe-324c-4206-be9d-5283ebff034f",
+      "name": "WhatsApp Trigger",
+      "webhookId": "9a6fadc0-6f8e-437d-818e-82abeac9338d",
+      "credentials": {
+        "whatsAppTriggerApi": {
+          "id": "o6umjLW7j6VJ1vIP",
+          "name": "WhatsApp OAuth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "employees",
+        "limit": 1,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "whatsapp_number",
+              "condition": "eq",
+              "keyValue": "={{ $json.messages[0].from }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -1200,
+        -464
+      ],
+      "id": "67d36d90-7f35-4e8f-8578-477a0b59046e",
+      "name": "Get many rows",
+      "credentials": {
+        "supabaseApi": {
+          "id": "ovPyaFS7leYwiEcU",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $('WhatsApp Trigger').item.json.messages[0];\nconst employee = $input.item.json; // From Supabase node\n\n// 1. Setup Dhaka Time & Date\nconst msgDate = new Date(parseInt(msg.timestamp) * 1000);\nconst todayDate = msgDate.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' }); // Format: YYYY-MM-DD\nconst dhakaHour = parseInt(msgDate.toLocaleTimeString('en-US', { timeZone: 'Asia/Dhaka', hour12: false, hour: '2-digit' }));\n\n// 2. Determine Time Window\nlet timeWindow = \"unknown\";\nif (dhakaHour >= 8 && dhakaHour < 11) timeWindow = \"morning\";\nelse if (dhakaHour >= 11 && dhakaHour < 14) timeWindow = \"noon\";\nelse if (dhakaHour >= 14 && dhakaHour < 17) timeWindow = \"afternoon\";\nelse if (dhakaHour >= 17) timeWindow = \"evening\";\n\n// 3. Extract Message Content\nlet textBody = msg.text ? msg.text.body : \"\";\nlet isGoogleMap = textBody.includes(\"See my real-time location on Maps\");\nlet nativeLat = msg.location ? msg.location.latitude : null;\nlet nativeLng = msg.location ? msg.location.longitude : null;\n\nreturn {\n  employee_id: employee.id,\n  tracking_date: todayDate,\n  time_window: timeWindow,\n  text_body: textBody,\n  is_google_map: isGoogleMap,\n  reply_timestamp: msgDate.toISOString(),\n  lat: nativeLat,\n  lng: nativeLng\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -976,
+        -464
+      ],
+      "id": "04c7d5b8-c1bc-4183-83fe-279d4af3799a",
+      "name": "Time & Message Classifier"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "014e1b3d-0234-4264-9340-7152a9f02d71",
+              "leftValue": "={{ $json.is_google_map }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -752,
+        -464
+      ],
+      "id": "1567d0d8-da8f-40f0-b718-f524fd0da755",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.time_window }}",
+                    "rightValue": "morning",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "25b6491a-36e8-4b84-bb3f-2ba3bd6207c4"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Morning"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "7a0ea317-5fb3-4095-bf01-015b5cd81b90",
+                    "leftValue": "={{ $json.time_window }}",
+                    "rightValue": "noon",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Noon"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "0644a2ae-0a5d-4d18-bf04-10bc40ca02b3",
+                    "leftValue": "={{ $json.time_window }}",
+                    "rightValue": "afternoon",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Afternoon"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "dd43229f-ad21-4072-bf41-b61d989488dc",
+                    "leftValue": "={{ $json.time_window }}",
+                    "rightValue": "e",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Evening"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -528,
+        -496
+      ],
+      "id": "2614d183-3f26-414e-8f49-af6779fa8a90",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -192,
+        -448
+      ],
+      "id": "01b9e799-acd8-42cf-9bb2-a6d6f465fbf0",
+      "name": "HTTP Request"
+    }
+  ],
+  "pinData": {
+    "WhatsApp Trigger": [
+      {
+        "json": {
+          "messaging_product": "whatsapp",
+          "metadata": {
+            "display_phone_number": "8801316997744",
+            "phone_number_id": "1149569711563841"
+          },
+          "contacts": [
+            {
+              "profile": {
+                "name": "Noray Afzal Nahid"
+              },
+              "wa_id": "8801690000732",
+              "user_id": "BD.1029081193632814"
+            }
+          ],
+          "messages": [
+            {
+              "from": "8801690000732",
+              "from_user_id": "BD.1029081193632814",
+              "id": "wamid.HBgNODgwMTY5MDAwMDczMhUCABIYIEFDRkRGMzFBN0FDQjM4NzkwRjUxM0NGM0MwRUY4ODAxAA==",
+              "timestamp": "1778492958",
+              "text": {
+                "body": "Ok all good"
+              },
+              "type": "text"
+            }
+          ],
+          "field": "messages"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "WhatsApp Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get many rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Time & Message Classifier": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many rows": {
+      "main": [
+        [
+          {
+            "node": "Time & Message Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [],
+        [],
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "9dd78287-87d9-4675-85e5-3a648e6228fa",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f6b1619e72c7a67771ee3ceb547062802501090268a7fa6476e4ce776b94042c"
+  },
+  "id": "T5R7bit7HlzHSryS",
+  "tags": []
+}

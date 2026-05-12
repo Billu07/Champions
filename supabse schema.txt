@@ -1,0 +1,52 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.daily_tracking (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  employee_id uuid,
+  tracking_date date NOT NULL,
+  morning_reply_time timestamp with time zone,
+  morning_text text,
+  noon_reply_time timestamp with time zone,
+  noon_lat numeric,
+  noon_lng numeric,
+  noon_address text,
+  noon_area text,
+  noon_city text,
+  noon_map_link text,
+  afternoon_reply_time timestamp with time zone,
+  afternoon_text text,
+  evening_reply_time timestamp with time zone,
+  evening_report_text text,
+  customers_visited integer DEFAULT 0,
+  leads_generated integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT daily_tracking_pkey PRIMARY KEY (id),
+  CONSTRAINT daily_tracking_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id)
+);
+CREATE TABLE public.employees (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  full_name text NOT NULL,
+  designation text,
+  department text,
+  branch text,
+  whatsapp_number text NOT NULL UNIQUE,
+  is_active_for_tracking boolean DEFAULT false,
+  joining_date date,
+  status text DEFAULT 'Active'::text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT employees_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.message_logs (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  employee_id uuid,
+  direction text CHECK (direction = ANY (ARRAY['sent'::text, 'received'::text])),
+  message_type text,
+  message_body text,
+  raw_payload jsonb,
+  timestamp timestamp with time zone DEFAULT now(),
+  CONSTRAINT message_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT message_logs_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id)
+);

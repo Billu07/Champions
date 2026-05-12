@@ -1,0 +1,6 @@
+﻿full_name,designation,department,branch,whatsapp_number,tracking_enabled,is_active,status,tags,aliases,notes
+Mohammad Abu Naser,"Director, Sales","Sales & Marketing",SINSIM,01409700200,true,true,Active,"sales_field","Abu Naser|Naser",Imported from Team info
+Md. Shakil Amed,"Manager (Sales & Marketing)","Sales & Marketing",SINSIM,01997343434,true,true,Active,"sales_field",,"Imported from Team info"
+Md. Sajib Mia,Driver,Transport,HO,01761599007,false,true,Active,"drivers",,
+Md. Nurul Islam,"Manager - Commercial",Commercial,HO,01705100242,false,true,Active,"head_office",,
+Md. Sabbir Hossen,"Asst. Manager-Digital Marketing",Marketing,HO,01727634188,false,true,Active,"head_office",,
