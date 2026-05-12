@@ -105,7 +105,11 @@ export async function runScheduledSlot(slot: SlotKey, now = new Date()) {
           toE164: employee.whatsapp_e164,
           templateName: template.template_name,
           languageCode: template.language_code,
-          bodyParameters: scheduledBodyParameters(slot, employee.full_name),
+          bodyParameters: scheduledBodyParameters(
+            slot,
+            employee.full_name,
+            env.WHATSAPP_MORNING_TEMPLATE_BODY,
+          ),
         });
 
         await insertMessageEvent({

@@ -46,6 +46,7 @@ type TestSchedulerConsoleProps = {
   initialEmployees: Employee[];
   initialSchedules: Schedule[];
   timezone: string;
+  defaultMorningBodyText: string;
 };
 
 const slotOptions: Array<{ key: SlotKey; label: string }> = [
@@ -80,12 +81,14 @@ export function TestSchedulerConsole({
   initialEmployees,
   initialSchedules,
   timezone,
+  defaultMorningBodyText,
 }: TestSchedulerConsoleProps) {
   const [employees] = useState<Employee[]>(initialEmployees);
   const [schedules, setSchedules] = useState<Schedule[]>(initialSchedules);
 
   const [slot, setSlot] = useState<SlotKey>("morning");
   const [scheduledAtLocal, setScheduledAtLocal] = useState(defaultScheduleInput());
+  const [morningBodyText, setMorningBodyText] = useState(defaultMorningBodyText);
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>(
     initialEmployees.filter((item) => item.is_test_allowed).map((item) => item.id),
   );
@@ -168,6 +171,7 @@ export function TestSchedulerConsole({
         slot,
         scheduledAtIso: scheduledDate.toISOString(),
         recipientEmployeeIds: selectedEmployeeIds,
+        morningBodyText,
       }),
     });
 
@@ -256,6 +260,17 @@ export function TestSchedulerConsole({
               </div>
             </div>
           </div>
+
+          {slot === "morning" ? (
+            <label className="grid" style={{ gap: 6 }}>
+              <span>Morning Template `{"{{body}}"}` Text</span>
+              <textarea
+                value={morningBodyText}
+                onChange={(event) => setMorningBodyText(event.target.value)}
+                style={{ minHeight: 120 }}
+              />
+            </label>
+          ) : null}
 
           <div className="inline">
             <label className="inline">

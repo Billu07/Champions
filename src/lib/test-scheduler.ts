@@ -20,6 +20,7 @@ const schedulePayloadSchema = z.object({
   slot: z.enum(["morning", "noon", "afternoon", "evening"]),
   scheduledAtIso: z.string().datetime(),
   recipientEmployeeIds: z.array(z.string().uuid()).min(1).max(200),
+  morningBodyText: z.string().max(1500).optional().default(""),
   createdAtIso: z.string().datetime(),
 });
 
@@ -27,6 +28,7 @@ const scheduleCreateInputSchema = z.object({
   slot: z.enum(["morning", "noon", "afternoon", "evening"]),
   scheduledAtIso: z.string().datetime(),
   recipientEmployeeIds: z.array(z.string().uuid()).min(1).max(200),
+  morningBodyText: z.string().max(1500).optional().default(""),
 });
 
 type SchedulePayload = z.infer<typeof schedulePayloadSchema>;
@@ -160,6 +162,7 @@ export async function createTestSchedule(input: ScheduleCreateInput) {
     slot: parsed.data.slot,
     scheduledAtIso: new Date(scheduledAtMs).toISOString(),
     recipientEmployeeIds: validIds,
+    morningBodyText: parsed.data.morningBodyText ?? "",
     createdAtIso: new Date().toISOString(),
   };
 
@@ -269,7 +272,11 @@ async function executeDueSchedule(
         toE164: employee.whatsapp_e164,
         templateName: template.template_name,
         languageCode: template.language_code,
-        bodyParameters: scheduledBodyParameters(payload.slot, employee.full_name),
+        bodyParameters: scheduledBodyParameters(
+          payload.slot,
+          employee.full_name,
+          payload.morningBodyText || env.WHATSAPP_MORNING_TEMPLATE_BODY,
+        ),
       });
 
       await insertMessageEvent({

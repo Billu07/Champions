@@ -21,6 +21,7 @@ export default async function TestSchedulerPage() {
       <p>Schedule slot-template sends to selected test users from frontend.</p>
       <TestSchedulerConsole
         timezone={env.NEXT_PUBLIC_APP_TIMEZONE}
+        defaultMorningBodyText={env.WHATSAPP_MORNING_TEMPLATE_BODY}
         initialEmployees={employees.map((employee) => ({
           id: employee.id,
           full_name: employee.full_name,

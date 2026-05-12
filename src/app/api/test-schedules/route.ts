@@ -7,6 +7,7 @@ const createSchema = z.object({
   slot: z.enum(["morning", "noon", "afternoon", "evening"]),
   scheduledAtIso: z.string().datetime(),
   recipientEmployeeIds: z.array(z.string().uuid()).min(1),
+  morningBodyText: z.string().max(1500).optional().default(""),
 });
 
 export async function GET(request: Request) {
