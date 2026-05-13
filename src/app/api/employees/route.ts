@@ -1,7 +1,7 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 import { fail, ok } from "@/lib/http";
 import { requestHasAdminSession } from "@/lib/auth";
-import { listEmployees, upsertEmployee } from "@/lib/repository";
+import { deleteEmployee, listEmployees, upsertEmployee } from "@/lib/repository";
 
 const employeeSchema = z.object({
   id: z.string().uuid().optional(),
@@ -41,4 +41,19 @@ export async function POST(request: Request) {
 
   const id = await upsertEmployee(parsed.data);
   return ok({ id });
+}
+
+export async function DELETE(request: Request) {
+  if (!(await requestHasAdminSession(request))) {
+    return fail("Unauthorized", 401);
+  }
+
+  const id = new URL(request.url).searchParams.get("id") ?? "";
+  const parsedId = z.string().uuid().safeParse(id);
+  if (!parsedId.success) {
+    return fail("Invalid employee id", 400);
+  }
+
+  await deleteEmployee(parsedId.data);
+  return ok({ deleted: true });
 }

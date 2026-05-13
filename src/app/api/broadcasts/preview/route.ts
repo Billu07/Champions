@@ -1,25 +1,17 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 import { fail, ok } from "@/lib/http";
 import { requestHasAdminSession } from "@/lib/auth";
-import { enhanceCeoMessage } from "@/lib/ai";
-import { resolveMentions } from "@/lib/mention";
-import {
-  getEmployeesByIds,
-  getEmployeesByTagKeys,
-  insertMentionAudit,
-  listEmployees,
-} from "@/lib/repository";
+import { buildBroadcastPreview } from "@/lib/broadcast-routing";
+import { insertMentionAudit, listEmployees } from "@/lib/repository";
 import type { BroadcastPreviewRequest } from "@/lib/types";
 
 const schema = z.object({
   message: z.string().min(1),
+  audienceCategory: z.enum(["sales_team", "head_office", "drivers", "customers", "all", "custom"]).default("custom"),
   selectedEmployeeIds: z.array(z.string().uuid()).default([]),
   selectedTagKeys: z.array(z.string()).default([]),
+  useAiRouting: z.boolean().default(true),
 });
-
-function dedupeById<T extends { id: string }>(rows: T[]): T[] {
-  return Array.from(new Map(rows.map((row) => [row.id, row])).values());
-}
 
 export async function POST(request: Request) {
   if (!(await requestHasAdminSession(request))) {
@@ -33,29 +25,45 @@ export async function POST(request: Request) {
     return fail(parsed.error.issues[0]?.message ?? "Invalid payload", 400);
   }
 
-  const allEmployees = (await listEmployees()).filter((employee) => employee.is_active);
+  const allEmployees = await listEmployees();
 
-  const selectedById = await getEmployeesByIds(parsed.data.selectedEmployeeIds);
-  const selectedByTag = await getEmployeesByTagKeys(parsed.data.selectedTagKeys);
-
-  const mentionResult = await resolveMentions(parsed.data.message, allEmployees);
-  const mentionEmployees = await getEmployeesByIds(mentionResult.matches.map((item) => item.employeeId));
-
-  const recipients = dedupeById([...selectedById, ...selectedByTag, ...mentionEmployees]);
+  const preview = await buildBroadcastPreview(
+    {
+      message: parsed.data.message,
+      audienceCategory: parsed.data.audienceCategory,
+      selectedEmployeeIds: parsed.data.selectedEmployeeIds,
+      selectedTagKeys: parsed.data.selectedTagKeys,
+      useAiRouting: parsed.data.useAiRouting,
+    },
+    allEmployees,
+  );
 
   await insertMentionAudit({
     messageBody: parsed.data.message,
-    extractedNames: mentionResult.extractedNames,
-    resolvedEmployeeIds: mentionResult.matches.map((item) => item.employeeId),
-    unresolvedNames: mentionResult.unresolved,
+    extractedNames: preview.extractedMentionNames,
+    resolvedEmployeeIds: preview.mentionMatches.map((item) => item.employeeId),
+    unresolvedNames: preview.unresolvedMentions,
   });
 
-  const enhancedMessage = await enhanceCeoMessage(parsed.data.message);
+  const employeesById = new Map(allEmployees.map((employee) => [employee.id, employee]));
+  const recipients = preview.recipients
+    .map((id) => employeesById.get(id))
+    .filter((employee): employee is (typeof allEmployees)[number] => Boolean(employee))
+    .map((employee) => ({
+      id: employee.id,
+      full_name: employee.full_name,
+      whatsapp_e164: employee.whatsapp_e164,
+      department: employee.department,
+      designation: employee.designation,
+      tags: employee.tags,
+    }));
 
   return ok({
     recipients,
-    mentionMatches: mentionResult.matches,
-    unresolvedMentions: mentionResult.unresolved,
-    enhancedMessage,
+    routes: preview.routes,
+    mentionMatches: preview.mentionMatches,
+    unresolvedMentions: preview.unresolvedMentions,
+    unresolvedAiTargets: preview.unresolvedAiTargets,
+    enhancedMessage: preview.enhancedMessage,
   });
 }

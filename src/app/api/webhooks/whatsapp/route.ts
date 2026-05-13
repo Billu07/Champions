@@ -1,6 +1,49 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { env } from "@/lib/config";
 import { processInboundWebhookPayload } from "@/lib/scheduling";
+import {
+  insertBroadcastDeliveryEvent,
+  insertMessageEvent,
+  updateBroadcastDeliveryStatusByMessageId,
+} from "@/lib/repository";
+import type { BroadcastDeliveryLifecycleStatus } from "@/lib/types";
+
+type WebhookStatus = {
+  id?: string;
+  status?: string;
+  timestamp?: string;
+  recipient_id?: string;
+  errors?: Array<{ message?: string; title?: string; details?: string }>;
+};
+
+function parseStatuses(payload: Record<string, unknown>): WebhookStatus[] {
+  const entry = Array.isArray(payload.entry) ? payload.entry : [];
+  const statuses: WebhookStatus[] = [];
+
+  for (const item of entry as Array<{ changes?: Array<{ value?: { statuses?: WebhookStatus[] } }> }>) {
+    for (const change of item.changes ?? []) {
+      for (const status of change.value?.statuses ?? []) {
+        statuses.push(status);
+      }
+    }
+  }
+
+  return statuses;
+}
+
+function normalizeStatus(value: string | undefined): BroadcastDeliveryLifecycleStatus | null {
+  const raw = String(value ?? "").toLowerCase();
+  if (raw === "sent" || raw === "delivered" || raw === "read" || raw === "failed") {
+    return raw;
+  }
+  return null;
+}
+
+function statusFailureReason(status: WebhookStatus): string | null {
+  const first = status.errors?.[0];
+  if (!first) return null;
+  return first.message || first.title || first.details || null;
+}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -19,8 +62,65 @@ export async function POST(request: Request) {
   const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 
   try {
-    const result = await processInboundWebhookPayload(payload);
-    return NextResponse.json({ ok: true, ...result });
+    const inbound = await processInboundWebhookPayload(payload);
+
+    const statuses = parseStatuses(payload);
+    let statusesProcessed = 0;
+    let statusesMatched = 0;
+
+    for (const status of statuses) {
+      const messageId = status.id?.trim();
+      const normalized = normalizeStatus(status.status);
+      if (!messageId || !normalized) continue;
+
+      const occurredAt = status.timestamp
+        ? new Date(Number(status.timestamp) * 1000).toISOString()
+        : new Date().toISOString();
+      const failureReason = statusFailureReason(status);
+
+      const updated = await updateBroadcastDeliveryStatusByMessageId({
+        whatsappMessageId: messageId,
+        status: normalized,
+        failureReason,
+        occurredAt,
+        payload: status as unknown as Record<string, unknown>,
+      });
+
+      await insertBroadcastDeliveryEvent({
+        deliveryId: updated.deliveryId,
+        campaignId: updated.campaignId,
+        employeeId: updated.employeeId,
+        whatsappMessageId: messageId,
+        status: normalized,
+        failureReason,
+        occurredAt,
+        payload: status as unknown as Record<string, unknown>,
+      });
+
+      if (updated.employeeId) {
+        await insertMessageEvent({
+          employeeId: updated.employeeId,
+          direction: "outbound",
+          category: `ceo_broadcast_status_${normalized}`,
+          whatsappMessageId: messageId,
+          payload: status as unknown as Record<string, unknown>,
+          messageText: null,
+          receivedAt: occurredAt,
+        });
+        statusesMatched += 1;
+      }
+
+      statusesProcessed += 1;
+    }
+
+    return NextResponse.json({
+      ok: true,
+      inbound,
+      statuses: {
+        processed: statusesProcessed,
+        matched: statusesMatched,
+      },
+    });
   } catch (error) {
     return NextResponse.json(
       {

@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 import { fail, ok } from "@/lib/http";
 import { requestHasAdminSession } from "@/lib/auth";
 import { env } from "@/lib/config";
@@ -8,40 +8,27 @@ import {
   insertBroadcastDelivery,
   insertMessageEvent,
 } from "@/lib/repository";
-import { sendDynamicTemplateMessage, sendTextMessage } from "@/lib/whatsapp";
+import { sendDynamicTemplateMessage } from "@/lib/whatsapp";
+import type { BroadcastSendRequest } from "@/lib/types";
+
+const routeSchema = z.object({
+  routeId: z.string().min(1),
+  targetLabel: z.string().min(1),
+  source: z.enum(["manual", "tag", "mention", "ai_group", "ai_person", "mixed"]),
+  recipientEmployeeIds: z.array(z.string().uuid()).default([]),
+  message: z.string().min(1),
+});
 
 const schema = z.object({
   originalMessage: z.string().min(1),
   finalMessage: z.string().min(1),
-  recipientEmployeeIds: z.array(z.string().uuid()).min(1),
-  audienceType: z.enum(["manual", "tag", "mention", "mixed"]),
+  audienceCategory: z.enum(["sales_team", "head_office", "drivers", "customers", "all", "custom"]),
+  reviewedRoutes: z.array(routeSchema).min(1),
+  allowEmptyRecipients: z.boolean().optional().default(false),
 });
 
-async function sendWithTemplateFirstPolicy(toE164: string, finalMessage: string) {
-  try {
-    const freeform = await sendTextMessage({ toE164, message: finalMessage });
-    return { mode: "freeform" as const, id: freeform.id ?? null };
-  } catch (error) {
-    const message = (error as Error).message.toLowerCase();
-    const requiresTemplate =
-      message.includes("24") ||
-      message.includes("outside") ||
-      message.includes("window") ||
-      message.includes("policy");
-
-    if (!requiresTemplate) {
-      throw error;
-    }
-
-    const templated = await sendDynamicTemplateMessage({
-      toE164,
-      templateName: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
-      languageCode: "en",
-      bodyParameters: [{ type: "text", parameterName: "body", text: finalMessage.slice(0, 1000) }],
-    });
-
-    return { mode: "template_fallback" as const, id: templated.id ?? null };
-  }
+function dedupe<T>(values: T[]): T[] {
+  return Array.from(new Set(values));
 }
 
 export async function POST(request: Request) {
@@ -49,59 +36,97 @@ export async function POST(request: Request) {
     return fail("Unauthorized", 401);
   }
 
-  const body = await request.json().catch(() => ({}));
+  const body = (await request.json().catch(() => ({}))) as BroadcastSendRequest;
   const parsed = schema.safeParse(body);
 
   if (!parsed.success) {
     return fail(parsed.error.issues[0]?.message ?? "Invalid payload", 400);
   }
 
-  const recipients = await getEmployeesByIds(parsed.data.recipientEmployeeIds);
+  const recipientIds = dedupe(parsed.data.reviewedRoutes.flatMap((route) => route.recipientEmployeeIds));
+  if (recipientIds.length === 0 && !parsed.data.allowEmptyRecipients) {
+    return fail("No recipients selected in reviewed routes", 400);
+  }
+
+  const recipients = await getEmployeesByIds(recipientIds);
+  const recipientsById = new Map(recipients.map((employee) => [employee.id, employee]));
 
   const campaignId = await createBroadcastCampaign({
     creatorType: "ceo",
     originalMessage: parsed.data.originalMessage,
     finalMessage: parsed.data.finalMessage,
-    audienceType: parsed.data.audienceType,
+    audienceType: parsed.data.audienceCategory,
     recipientCount: recipients.length,
   });
 
   let sent = 0;
   let failed = 0;
 
-  for (const employee of recipients) {
-    try {
-      const delivery = await sendWithTemplateFirstPolicy(employee.whatsapp_e164, parsed.data.finalMessage);
+  for (const route of parsed.data.reviewedRoutes) {
+    const routeMessage = route.message.trim() || parsed.data.finalMessage;
 
-      await insertBroadcastDelivery({
-        campaignId,
-        employeeId: employee.id,
-        whatsappMessageId: delivery.id,
-        status: "sent",
-      });
+    for (const employeeId of dedupe(route.recipientEmployeeIds)) {
+      const employee = recipientsById.get(employeeId);
+      if (!employee) continue;
 
-      await insertMessageEvent({
-        employeeId: employee.id,
-        direction: "outbound",
-        category: `ceo_broadcast_${delivery.mode}`,
-        whatsappMessageId: delivery.id,
-        payload: {
+      try {
+        const response = await sendDynamicTemplateMessage({
+          toE164: employee.whatsapp_e164,
+          templateName: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
+          languageCode: "en",
+          bodyParameters: [
+            {
+              type: "text",
+              parameterName: "body",
+              text: routeMessage.slice(0, 1000),
+            },
+          ],
+        });
+
+        await insertBroadcastDelivery({
           campaignId,
-          audienceType: parsed.data.audienceType,
-          deliveryMode: delivery.mode,
-        },
-        messageText: parsed.data.finalMessage,
-      });
+          employeeId: employee.id,
+          whatsappMessageId: response.id,
+          status: "accepted",
+          statusPayload: {
+            routeId: route.routeId,
+            routeSource: route.source,
+            targetLabel: route.targetLabel,
+          },
+        });
 
-      sent += 1;
-    } catch (error) {
-      await insertBroadcastDelivery({
-        campaignId,
-        employeeId: employee.id,
-        status: "failed",
-        failureReason: (error as Error).message,
-      });
-      failed += 1;
+        await insertMessageEvent({
+          employeeId: employee.id,
+          direction: "outbound",
+          category: "ceo_broadcast_template",
+          whatsappMessageId: response.id ?? null,
+          payload: {
+            campaignId,
+            audienceCategory: parsed.data.audienceCategory,
+            routeId: route.routeId,
+            routeSource: route.source,
+            routeTargetLabel: route.targetLabel,
+            template: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
+          },
+          messageText: routeMessage,
+        });
+
+        sent += 1;
+      } catch (error) {
+        await insertBroadcastDelivery({
+          campaignId,
+          employeeId: employee.id,
+          status: "failed",
+          failureReason: (error as Error).message,
+          statusPayload: {
+            routeId: route.routeId,
+            routeSource: route.source,
+            targetLabel: route.targetLabel,
+          },
+        });
+
+        failed += 1;
+      }
     }
   }
 
@@ -109,6 +134,7 @@ export async function POST(request: Request) {
     campaignId,
     sent,
     failed,
+    routes: parsed.data.reviewedRoutes.length,
     recipients: recipients.length,
   });
 }

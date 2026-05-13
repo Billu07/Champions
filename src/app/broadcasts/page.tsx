@@ -15,7 +15,10 @@ export default async function BroadcastsPage() {
     <main className="page">
       <AdminNav />
       <h1>Broadcast Center</h1>
-      <p>Compose, enhance, preview recipient resolution, then deliver.</p>
+      <p>
+        Compose one message, auto-route by team or individual names, review each route, then send
+        through approved WhatsApp template.
+      </p>
       <BroadcastConsole
         initialEmployees={employees.filter((employee) => employee.is_active)}
         initialTags={tags}

@@ -14,8 +14,8 @@ export default async function EmployeesPage() {
   return (
     <main className="page">
       <AdminNav />
-      <h1>Employees & Tags</h1>
-      <p>Manage roster, tracking eligibility, and routing tags (Sales, HO, Drivers).</p>
+      <h1>People Directory</h1>
+      <p>Manage members, tags, tracking eligibility, and routing metadata.</p>
       <EmployeeManager initialEmployees={employees} initialTags={tags} />
     </main>
   );

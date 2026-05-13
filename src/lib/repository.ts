@@ -1,7 +1,7 @@
 ﻿import { normalizeBangladeshPhone } from "@/lib/phone";
 import { supabaseAdmin } from "@/lib/db";
 import { TRACKING_TAG_KEY } from "@/lib/constants";
-import type { ReportKind, SlotKey } from "@/lib/types";
+import type { BroadcastDeliveryLifecycleStatus, ReportKind, SlotKey } from "@/lib/types";
 
 export type EmployeeRow = {
   id: string;
@@ -324,6 +324,25 @@ export async function upsertEmployee(input: UpsertEmployeeInput) {
   return employeeId;
 }
 
+export async function deleteEmployee(employeeId: string) {
+  const schema = await getEmployeesSchemaMode();
+
+  if (schema === "modern") {
+    const res = await supabaseAdmin
+      .from("employees")
+      .delete()
+      .eq("id", employeeId);
+    ensureNoError(res.error, "Failed to delete employee");
+    return;
+  }
+
+  const res = await supabaseAdmin
+    .from("employees")
+    .delete()
+    .eq("id", employeeId);
+  ensureNoError(res.error, "Failed to delete employee");
+}
+
 export async function getTrackedEmployees(): Promise<EmployeeRow[]> {
   if (!(await hasTagTables())) {
     return fetchEmployees({
@@ -584,8 +603,10 @@ export async function insertBroadcastDelivery(input: {
   campaignId: string;
   employeeId: string;
   whatsappMessageId?: string | null;
-  status: "sent" | "failed";
+  status: BroadcastDeliveryLifecycleStatus;
   failureReason?: string | null;
+  lastStatusAt?: string | null;
+  statusPayload?: Record<string, unknown>;
 }) {
   const res = await supabaseAdmin.from("broadcast_deliveries").insert({
     campaign_id: input.campaignId,
@@ -593,9 +614,94 @@ export async function insertBroadcastDelivery(input: {
     whatsapp_message_id: input.whatsappMessageId ?? null,
     status: input.status,
     failure_reason: input.failureReason ?? null,
+    last_status_at: input.lastStatusAt ?? new Date().toISOString(),
+    status_payload: input.statusPayload ?? {},
   });
 
   ensureNoError(res.error, "Failed to insert broadcast delivery");
+}
+
+function statusRank(status: BroadcastDeliveryLifecycleStatus): number {
+  if (status === "accepted") return 1;
+  if (status === "sent") return 2;
+  if (status === "delivered") return 3;
+  if (status === "read") return 4;
+  return 5;
+}
+
+export async function updateBroadcastDeliveryStatusByMessageId(input: {
+  whatsappMessageId: string;
+  status: BroadcastDeliveryLifecycleStatus;
+  failureReason?: string | null;
+  occurredAt?: string | null;
+  payload?: Record<string, unknown>;
+}) {
+  const existing = await supabaseAdmin
+    .from("broadcast_deliveries")
+    .select("id,campaign_id,employee_id,status")
+    .eq("whatsapp_message_id", input.whatsappMessageId)
+    .maybeSingle();
+
+  ensureNoError(existing.error, "Failed to load broadcast delivery by message id");
+
+  if (!existing.data?.id) {
+    return {
+      updated: false,
+      deliveryId: null as string | null,
+      campaignId: null as string | null,
+      employeeId: null as string | null,
+    };
+  }
+
+  const currentStatus = existing.data.status as BroadcastDeliveryLifecycleStatus;
+  const shouldUpdate =
+    input.status === "failed" ||
+    statusRank(input.status) >= statusRank(currentStatus);
+
+  if (shouldUpdate) {
+    const updateRes = await supabaseAdmin
+      .from("broadcast_deliveries")
+      .update({
+        status: input.status,
+        failure_reason: input.failureReason ?? null,
+        last_status_at: input.occurredAt ?? new Date().toISOString(),
+        status_payload: input.payload ?? {},
+      })
+      .eq("id", existing.data.id);
+
+    ensureNoError(updateRes.error, "Failed to update broadcast delivery status");
+  }
+
+  return {
+    updated: shouldUpdate,
+    deliveryId: existing.data.id as string,
+    campaignId: existing.data.campaign_id as string | null,
+    employeeId: existing.data.employee_id as string | null,
+  };
+}
+
+export async function insertBroadcastDeliveryEvent(input: {
+  deliveryId?: string | null;
+  campaignId?: string | null;
+  employeeId?: string | null;
+  whatsappMessageId: string;
+  status: BroadcastDeliveryLifecycleStatus;
+  failureReason?: string | null;
+  payload?: Record<string, unknown>;
+  occurredAt?: string | null;
+}) {
+  const res = await supabaseAdmin.from("broadcast_delivery_events").insert({
+    delivery_id: input.deliveryId ?? null,
+    campaign_id: input.campaignId ?? null,
+    employee_id: input.employeeId ?? null,
+    whatsapp_message_id: input.whatsappMessageId,
+    status: input.status,
+    failure_reason: input.failureReason ?? null,
+    payload: input.payload ?? {},
+    occurred_at: input.occurredAt ?? new Date().toISOString(),
+  });
+
+  ensureNoError(res.error, "Failed to insert broadcast delivery event");
 }
 
 export async function insertMentionAudit(input: {
@@ -636,16 +742,154 @@ export async function insertReport(input: {
   ensureNoError(res.error, "Failed to insert report");
 }
 
-export async function listReports(limit = 40) {
-  const res = await supabaseAdmin
+export async function listReports(
+  options:
+    | number
+    | {
+        limit?: number;
+        kind?: ReportKind | "all";
+        fromDate?: string;
+        toDate?: string;
+      } = 40,
+) {
+  const limit = typeof options === "number" ? options : (options.limit ?? 40);
+  const kind = typeof options === "number" ? "all" : (options.kind ?? "all");
+  const fromDate = typeof options === "number" ? undefined : options.fromDate;
+  const toDate = typeof options === "number" ? undefined : options.toDate;
+
+  let query = supabaseAdmin
     .from("reports")
     .select("id,kind,report_date,title,narrative,metrics,model_name,created_at,employees:employee_id(full_name)")
     .order("report_date", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    .order("created_at", { ascending: false });
+
+  if (kind !== "all") query = query.eq("kind", kind);
+  if (fromDate) query = query.gte("report_date", fromDate);
+  if (toDate) query = query.lte("report_date", toDate);
+  query = query.limit(Math.min(Math.max(limit, 1), 300));
+
+  const res = await query;
 
   ensureNoError(res.error, "Failed to list reports");
   return res.data ?? [];
+}
+
+export async function listRecentBroadcastCampaigns(limit = 25) {
+  const campaignsRes = await supabaseAdmin
+    .from("broadcast_campaigns")
+    .select("id,creator_type,audience_type,recipient_count,original_message,final_message,created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  ensureNoError(campaignsRes.error, "Failed to list broadcast campaigns");
+  const campaigns = campaignsRes.data ?? [];
+
+  if (campaigns.length === 0) {
+    return [];
+  }
+
+  const campaignIds = campaigns.map((row) => row.id as string);
+  const deliveryRes = await supabaseAdmin
+    .from("broadcast_deliveries")
+    .select("campaign_id,status,failure_reason")
+    .in("campaign_id", campaignIds);
+
+  ensureNoError(deliveryRes.error, "Failed to list broadcast deliveries");
+  const deliveries = deliveryRes.data ?? [];
+  const grouped = new Map<string, Array<{ status: string; failure_reason: string | null }>>();
+
+  for (const row of deliveries as Array<{ campaign_id: string; status: string; failure_reason: string | null }>) {
+    const list = grouped.get(row.campaign_id) ?? [];
+    list.push({ status: row.status, failure_reason: row.failure_reason });
+    grouped.set(row.campaign_id, list);
+  }
+
+  return campaigns.map((campaign) => {
+    const rows = grouped.get(campaign.id as string) ?? [];
+    const accepted = rows.filter((item) => item.status === "accepted").length;
+    const sent = rows.filter((item) => item.status === "sent").length;
+    const delivered = rows.filter((item) => item.status === "delivered").length;
+    const read = rows.filter((item) => item.status === "read").length;
+    const failed = rows.filter((item) => item.status === "failed").length;
+
+    return {
+      ...campaign,
+      delivery_summary: {
+        accepted,
+        sent,
+        delivered,
+        read,
+        failed,
+      },
+    };
+  });
+}
+
+export async function getOpsDashboardMetrics(trackingDate: string) {
+  const employees = await listEmployees();
+  const activeEmployees = employees.filter((employee) => employee.is_active);
+  const trackedActiveEmployees = activeEmployees.filter((employee) => employee.tracking_enabled);
+
+  const todaySlotsRes = await supabaseAdmin
+    .from("slot_responses")
+    .select("is_missing,reply_count", { count: "exact" })
+    .eq("tracking_date", trackingDate);
+  ensureNoError(todaySlotsRes.error, "Failed to load slot metrics");
+
+  const todayRows = todaySlotsRes.data ?? [];
+  const missingSlots = todayRows.filter((row) => row.is_missing).length;
+  const repliedSlots = todayRows.filter((row) => !row.is_missing).length;
+  const totalReplyFragments = todayRows.reduce((sum, row) => sum + Number(row.reply_count ?? 0), 0);
+
+  const reportsRes = await supabaseAdmin
+    .from("reports")
+    .select("id", { count: "exact", head: true })
+    .eq("report_date", trackingDate);
+  ensureNoError(reportsRes.error, "Failed to load report metrics");
+
+  const runningSchedulesRes = await supabaseAdmin
+    .from("job_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("job_type", "test_scheduled_send")
+    .eq("status", "running");
+  ensureNoError(runningSchedulesRes.error, "Failed to load test schedule metrics");
+
+  const recentDeliveriesRes = await supabaseAdmin
+    .from("broadcast_deliveries")
+    .select("status", { count: "exact" })
+    .gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+  ensureNoError(recentDeliveriesRes.error, "Failed to load delivery metrics");
+
+  const recentDeliveries = recentDeliveriesRes.data ?? [];
+  const delivered24h = recentDeliveries.filter((row) => row.status === "delivered" || row.status === "read").length;
+  const failed24h = recentDeliveries.filter((row) => row.status === "failed").length;
+
+  return {
+    trackingDate,
+    employees: {
+      active: activeEmployees.length,
+      trackedActive: trackedActiveEmployees.length,
+      total: employees.length,
+    },
+    responses: {
+      totalRows: todayRows.length,
+      repliedSlots,
+      missingSlots,
+      totalReplyFragments,
+      replyRate: todayRows.length > 0 ? Number(((repliedSlots / todayRows.length) * 100).toFixed(2)) : 0,
+    },
+    reports: {
+      generatedToday: reportsRes.count ?? 0,
+    },
+    testScheduler: {
+      pendingJobs: runningSchedulesRes.count ?? 0,
+    },
+    broadcast24h: {
+      deliveries: recentDeliveriesRes.count ?? recentDeliveries.length,
+      delivered: delivered24h,
+      failed: failed24h,
+    },
+  };
 }
 
 export async function getSlotResponsesByDate(trackingDate: string) {

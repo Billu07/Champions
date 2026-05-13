@@ -3,6 +3,10 @@ import { isLoggedIn } from "@/lib/auth";
 
 const cards = [
   {
+    title: "Dashboard",
+    text: "KPI overview of roster, reply health, report generation, and broadcast outcomes.",
+  },
+  {
     title: "Scheduled Tracking",
     text: "Daily 8:00, 12:00, 15:00, 17:30 Asia/Dhaka prompts to tracked sales members.",
   },
@@ -34,6 +38,7 @@ export default async function HomePage() {
         <nav className="nav">
           {loggedIn ? (
             <>
+              <Link href="/dashboard">Dashboard</Link>
               <Link href="/employees">Employees</Link>
               <Link href="/test-scheduler">Test Scheduler</Link>
               <Link href="/broadcasts">Broadcasts</Link>

@@ -12,6 +12,6 @@ export async function POST(request: Request) {
     return NextResponse.redirect(url);
   }
 
-  const url = new URL("/employees", request.url);
+  const url = new URL("/dashboard", request.url);
   return NextResponse.redirect(url);
 }

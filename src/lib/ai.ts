@@ -1,4 +1,4 @@
-﻿import { env } from "@/lib/config";
+import { env } from "@/lib/config";
 
 type GeminiResponse = {
   candidates?: Array<{
@@ -6,6 +6,13 @@ type GeminiResponse = {
       parts?: Array<{ text?: string }>;
     };
   }>;
+};
+
+export type AiInstructionRoute = {
+  targetType: "person" | "group";
+  target: string;
+  message: string;
+  confidence: number;
 };
 
 async function runGemini(prompt: string, asJson = false): Promise<string> {
@@ -62,6 +69,93 @@ export async function extractMentionNames(message: string): Promise<string[]> {
     return (parsed.names ?? []).map((name) => name.trim()).filter(Boolean);
   } catch {
     return [];
+  }
+}
+
+function normalizeGroupTarget(target: string): string {
+  const value = target.trim().toLowerCase();
+  if (["sales", "sales team", "field sales", "sales_field"].includes(value)) return "sales_team";
+  if (["head office", "ho", "office", "head_office"].includes(value)) return "head_office";
+  if (["driver", "drivers"].includes(value)) return "drivers";
+  if (["customer", "customers", "client", "clients"].includes(value)) return "customers";
+  if (["all", "everyone", "whole team", "entire team"].includes(value)) return "all";
+  return value;
+}
+
+function heuristicInstructionRoutes(message: string): AiInstructionRoute[] {
+  const chunks = message
+    .split(/\n|[.;]|,(?=\s*tell\s)/gi)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const routes: AiInstructionRoute[] = [];
+  const tellPattern = /^tell\s+(.+?)\s+to\s+(.+)$/i;
+
+  for (const chunk of chunks) {
+    const match = chunk.match(tellPattern);
+    if (!match) continue;
+    const [, targetRaw, instructionRaw] = match;
+    const target = targetRaw.trim();
+    const normalizedGroup = normalizeGroupTarget(target);
+    const isGroup = ["sales_team", "head_office", "drivers", "customers", "all"].includes(normalizedGroup);
+
+    routes.push({
+      targetType: isGroup ? "group" : "person",
+      target: isGroup ? normalizedGroup : target,
+      message: instructionRaw.trim(),
+      confidence: 0.55,
+    });
+  }
+
+  if (routes.length > 0) return routes;
+
+  return [
+    {
+      targetType: "group",
+      target: "all",
+      message: message.trim(),
+      confidence: 0.4,
+    },
+  ];
+}
+
+export async function extractInstructionRoutes(message: string): Promise<AiInstructionRoute[]> {
+  const prompt = [
+    "You are parsing a CEO WhatsApp instruction.",
+    "Extract one or more targeted routes from the message.",
+    "Valid group targets: sales_team, head_office, drivers, customers, all.",
+    "Use targetType=person when a specific person is named.",
+    "Return strict JSON only with this shape:",
+    "{\"routes\":[{\"targetType\":\"person|group\",\"target\":\"string\",\"message\":\"string\",\"confidence\":0.0}]}",
+    "Rules:",
+    "- Keep each route message concise and specific to only that target.",
+    "- If a route does not map to a valid group target, keep it as targetType=person.",
+    "- Confidence must be between 0 and 1.",
+    `Message:\n${message}`,
+  ].join("\n\n");
+
+  try {
+    const output = await runGemini(prompt, true);
+    const parsed = JSON.parse(output) as { routes?: AiInstructionRoute[] };
+    const cleaned = (parsed.routes ?? [])
+      .map((route) => {
+        const targetType: AiInstructionRoute["targetType"] =
+          route.targetType === "group" ? "group" : "person";
+        return {
+          targetType,
+          target:
+            targetType === "group"
+              ? normalizeGroupTarget(String(route.target ?? ""))
+              : String(route.target ?? "").trim(),
+          message: String(route.message ?? "").trim(),
+          confidence: Math.max(0, Math.min(1, Number(route.confidence ?? 0))),
+        };
+      })
+      .filter((route) => route.target && route.message);
+
+    return cleaned.length > 0 ? cleaned : heuristicInstructionRoutes(message);
+  } catch {
+    return heuristicInstructionRoutes(message);
   }
 }
 

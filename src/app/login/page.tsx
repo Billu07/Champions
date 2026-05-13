@@ -7,7 +7,7 @@ export default async function LoginPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   if (await isLoggedIn()) {
-    redirect("/employees");
+    redirect("/dashboard");
   }
 
   const params = await searchParams;

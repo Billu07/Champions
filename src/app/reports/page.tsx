@@ -15,7 +15,7 @@ export default async function ReportsPage() {
     <main className="page">
       <AdminNav />
       <h1>Reports</h1>
-      <p>Daily individual reports, team daily summaries, and weekly leadership briefs.</p>
+      <p>Filter, inspect, and export individual and team intelligence reports.</p>
       <ReportsBoard initialReports={reports} />
     </main>
   );
