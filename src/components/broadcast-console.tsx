@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useMemo, useRef, useState } from "react";
 import type { BroadcastAudienceCategory, BroadcastPreviewRoute } from "@/lib/types";
 
 type Employee = {
@@ -30,6 +30,7 @@ type PreviewResponse = {
 type BroadcastConsoleProps = {
   initialEmployees: Employee[];
   initialTags: Tag[];
+  templateName: string;
 };
 
 const audienceOptions: Array<{ value: BroadcastAudienceCategory; label: string; hint: string }> = [
@@ -49,7 +50,7 @@ function tagLabelFromCategory(category: BroadcastAudienceCategory): string {
   return "";
 }
 
-export function BroadcastConsole({ initialEmployees, initialTags }: BroadcastConsoleProps) {
+export function BroadcastConsole({ initialEmployees, initialTags, templateName }: BroadcastConsoleProps) {
   const [employees] = useState<Employee[]>(initialEmployees);
   const [tags] = useState<Tag[]>(initialTags);
   const [message, setMessage] = useState("");
@@ -60,9 +61,11 @@ export function BroadcastConsole({ initialEmployees, initialTags }: BroadcastCon
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [routeMessageDrafts, setRouteMessageDrafts] = useState<Record<string, string>>({});
   const [enabledRouteIds, setEnabledRouteIds] = useState<string[]>([]);
+  const [enhancedMessageDraft, setEnhancedMessageDraft] = useState("");
   const [useEnhancedForFallback, setUseEnhancedForFallback] = useState(true);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<string>("");
+  const reviewRef = useRef<HTMLElement | null>(null);
 
   const employeesById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
 
@@ -119,11 +122,16 @@ export function BroadcastConsole({ initialEmployees, initialTags }: BroadcastCon
 
     const parsed = json as PreviewResponse;
     setPreview(parsed);
+    setEnhancedMessageDraft(parsed.enhancedMessage);
     setRouteMessageDrafts(
       Object.fromEntries(parsed.routes.map((route) => [route.routeId, route.instruction])),
     );
     setEnabledRouteIds(parsed.routes.map((route) => route.routeId));
     setStatus(`Preview ready: ${parsed.routes.length} routes, ${parsed.recipients.length} recipients.`);
+
+    setTimeout(() => {
+      reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
   }
 
   async function onSend() {
@@ -142,7 +150,7 @@ export function BroadcastConsole({ initialEmployees, initialTags }: BroadcastCon
           recipientEmployeeIds: route.recipientEmployeeIds,
           message:
             draft ||
-            (useEnhancedForFallback && fallbackEnhance ? preview.enhancedMessage : message),
+            (useEnhancedForFallback && fallbackEnhance ? enhancedMessageDraft : message),
         };
       })
       .filter((route) => route.recipientEmployeeIds.length > 0 && route.message.length > 0);
@@ -159,7 +167,7 @@ export function BroadcastConsole({ initialEmployees, initialTags }: BroadcastCon
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         originalMessage: message,
-        finalMessage: useEnhancedForFallback ? preview.enhancedMessage : message,
+        finalMessage: useEnhancedForFallback ? enhancedMessageDraft : message,
         audienceCategory,
         reviewedRoutes,
       }),
@@ -172,8 +180,10 @@ export function BroadcastConsole({ initialEmployees, initialTags }: BroadcastCon
       return;
     }
 
+    const accepted = Number((json as { accepted?: number; sent?: number }).accepted ?? (json as { sent?: number }).sent ?? 0);
+    const failed = Number((json as { failed?: number }).failed ?? 0);
     setStatus(
-      `Campaign ${(json as { campaignId: string }).campaignId}: sent=${(json as { sent: number }).sent}, failed=${(json as { failed: number }).failed}`,
+      `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}. Final delivery updates from webhook status.`,
     );
   }
 
@@ -182,95 +192,25 @@ export function BroadcastConsole({ initialEmployees, initialTags }: BroadcastCon
       <form className="card grid" onSubmit={onPreview} style={{ gap: 12 }}>
         <h2>CEO Broadcast Composer</h2>
         <p>
-          Write one message. The system can split it into person/group routes, map names from employee records,
-          and require review before sending.
+          Write one instruction. AI will split by recipient and produce Bengali enhancement for your final review.
         </p>
 
-        <label className="grid" style={{ gap: 6 }}>
-          <span>Audience Category</span>
-          <select
-            value={audienceCategory}
-            onChange={(event) => setAudienceCategory(event.target.value as BroadcastAudienceCategory)}
-          >
-            {audienceOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label} - {option.hint}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="grid" style={{ gap: 6 }}>
-          <span>Message</span>
-          <textarea value={message} onChange={(event) => setMessage(event.target.value)} required />
-        </label>
-
         <div className="row">
-          <div className="col-6 grid" style={{ gap: 8 }}>
-            <strong>Tag Selection (optional)</strong>
-            <div className="inline">
-              {tags.map((tag) => (
-                <label key={tag.key} className="pill inline">
-                  <input
-                    type="checkbox"
-                    checked={selectedTagKeys.includes(tag.key)}
-                    onChange={(event) => {
-                      setSelectedTagKeys((prev) =>
-                        event.target.checked
-                          ? Array.from(new Set([...prev, tag.key]))
-                          : prev.filter((key) => key !== tag.key),
-                      );
-                    }}
-                  />
-                  {tag.label}
-                </label>
+          <label className="col-4 grid" style={{ gap: 6 }}>
+            <span>Audience Category</span>
+            <select
+              value={audienceCategory}
+              onChange={(event) => setAudienceCategory(event.target.value as BroadcastAudienceCategory)}
+            >
+              {audienceOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label} - {option.hint}
+                </option>
               ))}
-            </div>
-          </div>
+            </select>
+          </label>
 
-          <div className="col-6 grid" style={{ gap: 8 }}>
-            <strong>Manual Recipients (optional)</strong>
-            <input
-              className="input"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search members"
-            />
-            <div className="inline">
-              <button
-                className="ghost"
-                type="button"
-                onClick={() => setSelectedEmployeeIds(filteredEmployees.map((employee) => employee.id))}
-              >
-                Select Filtered
-              </button>
-              <button className="ghost" type="button" onClick={() => setSelectedEmployeeIds([])}>
-                Clear
-              </button>
-            </div>
-            <div className="inline">
-              {filteredEmployees.slice(0, 50).map((employee) => (
-                <label key={employee.id} className="pill inline">
-                  <input
-                    type="checkbox"
-                    checked={selectedEmployeeIds.includes(employee.id)}
-                    onChange={(event) => {
-                      setSelectedEmployeeIds((prev) =>
-                        event.target.checked
-                          ? Array.from(new Set([...prev, employee.id]))
-                          : prev.filter((id) => id !== employee.id),
-                      );
-                    }}
-                  />
-                  {employee.full_name}
-                </label>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="inline" style={{ justifyContent: "space-between" }}>
-          <div className="inline">
+          <div className="col-8 inline" style={{ alignItems: "flex-end" }}>
             <label className="inline">
               <input
                 type="checkbox"
@@ -285,21 +225,131 @@ export function BroadcastConsole({ initialEmployees, initialTags }: BroadcastCon
                 checked={useEnhancedForFallback}
                 onChange={(event) => setUseEnhancedForFallback(event.target.checked)}
               />
-              AI-enhance fallback routes
+              Use Bengali enhancement for fallback route text
             </label>
-            <button type="submit">Preview Routes</button>
           </div>
+        </div>
+
+        <label className="grid" style={{ gap: 6 }}>
+          <span>Original CEO Message</span>
+          <textarea value={message} onChange={(event) => setMessage(event.target.value)} required />
+        </label>
+
+        <details className="panel">
+          <summary>Optional Recipient Filters</summary>
+          <div className="grid" style={{ gap: 10, marginTop: 10 }}>
+            <div className="grid" style={{ gap: 8 }}>
+              <strong>Tags</strong>
+              <div className="inline">
+                {tags.map((tag) => (
+                  <label key={tag.key} className="pill inline">
+                    <input
+                      type="checkbox"
+                      checked={selectedTagKeys.includes(tag.key)}
+                      onChange={(event) => {
+                        setSelectedTagKeys((prev) =>
+                          event.target.checked
+                            ? Array.from(new Set([...prev, tag.key]))
+                            : prev.filter((key) => key !== tag.key),
+                        );
+                      }}
+                    />
+                    {tag.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid" style={{ gap: 8 }}>
+              <strong>Manual Members</strong>
+              <input
+                className="input"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search members"
+              />
+              <div className="inline">
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={() => setSelectedEmployeeIds(filteredEmployees.map((employee) => employee.id))}
+                >
+                  Select Filtered
+                </button>
+                <button className="ghost" type="button" onClick={() => setSelectedEmployeeIds([])}>
+                  Clear
+                </button>
+                <span className="muted">Selected: {selectedEmployeeIds.length}</span>
+              </div>
+              <div className="panel" style={{ maxHeight: 180, overflowY: "auto" }}>
+                <div className="inline">
+                  {filteredEmployees.slice(0, 120).map((employee) => (
+                    <label key={employee.id} className="pill inline">
+                      <input
+                        type="checkbox"
+                        checked={selectedEmployeeIds.includes(employee.id)}
+                        onChange={(event) => {
+                          setSelectedEmployeeIds((prev) =>
+                            event.target.checked
+                              ? Array.from(new Set([...prev, employee.id]))
+                              : prev.filter((id) => id !== employee.id),
+                          );
+                        }}
+                      />
+                      {employee.full_name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <div className="inline" style={{ justifyContent: "space-between" }}>
+          <button type="submit">Preview Broadcast Plan</button>
           <span className="muted">{status}</span>
         </div>
       </form>
 
       {preview ? (
-        <article className="card grid" style={{ gap: 12 }}>
+        <article className="card grid" style={{ gap: 12 }} ref={reviewRef}>
           <div className="inline" style={{ justifyContent: "space-between" }}>
-            <h2>Review Before Send</h2>
+            <h2>Enhanced Message + Recipients</h2>
             <p>
               Enabled routes: {enabledRouteIds.length} | Recipient reach: {routeRecipientCount}
             </p>
+          </div>
+
+          <div className="row">
+            <div className="col-8 grid" style={{ gap: 6 }}>
+              <strong>Enhanced Bengali Message (Editable)</strong>
+              <textarea
+                value={enhancedMessageDraft}
+                onChange={(event) => setEnhancedMessageDraft(event.target.value)}
+                style={{ minHeight: 180 }}
+              />
+            </div>
+            <div className="col-4 grid" style={{ gap: 8 }}>
+              <strong>Resolved Recipients ({preview.recipients.length})</strong>
+              <div className="panel" style={{ maxHeight: 180, overflowY: "auto" }}>
+                <div className="inline">
+                  {preview.recipients.map((item) => (
+                    <span className="pill" key={item.id}>{item.full_name}</span>
+                  ))}
+                </div>
+              </div>
+
+              <strong>Mention Matches</strong>
+              <div className="panel" style={{ maxHeight: 120, overflowY: "auto" }}>
+                <div className="inline">
+                  {preview.mentionMatches.length
+                    ? preview.mentionMatches.map((match) => (
+                      <span className="pill" key={`${match.employeeId}-${match.fullName}`}>{match.fullName}</span>
+                    ))
+                    : <span className="muted">No explicit mention match.</span>}
+                </div>
+              </div>
+            </div>
           </div>
 
           {preview.unresolvedMentions.length ? (
@@ -341,9 +391,9 @@ export function BroadcastConsole({ initialEmployees, initialTags }: BroadcastCon
                   Recipients: {route.recipientEmployeeIds.length}
                   {route.recipientEmployeeIds.length
                     ? ` (${route.recipientEmployeeIds
-                        .slice(0, 4)
+                        .slice(0, 6)
                         .map((id) => employeesById.get(id)?.full_name || id)
-                        .join(", ")}${route.recipientEmployeeIds.length > 4 ? ", ..." : ""})`
+                        .join(", ")}${route.recipientEmployeeIds.length > 6 ? ", ..." : ""})`
                     : ""}
                 </p>
 
@@ -361,14 +411,9 @@ export function BroadcastConsole({ initialEmployees, initialTags }: BroadcastCon
             ))}
           </div>
 
-          <details>
-            <summary>Enhanced Full Message</summary>
-            <pre>{preview.enhancedMessage}</pre>
-          </details>
-
           <div className="inline">
             <button onClick={onSend}>Send Broadcast</button>
-            <span className="muted">Template: `WHATSAPP_BROADCAST_TEMPLATE_NAME`</span>
+            <span className="muted">Template: {templateName}</span>
           </div>
         </article>
       ) : null}

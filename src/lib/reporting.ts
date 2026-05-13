@@ -1,7 +1,9 @@
-﻿import { addDays, format, startOfWeek } from "date-fns";
+import { addDays, format, startOfWeek } from "date-fns";
 import { env } from "@/lib/config";
 import { summarizeReport } from "@/lib/ai";
+import { logError } from "@/lib/logger";
 import {
+  deleteReportsByDateAndKinds,
   getSlotResponsesByDate,
   getSlotResponsesInRange,
   insertReport,
@@ -16,9 +18,59 @@ function groupBy<T>(items: T[], key: (item: T) => string): Record<string, T[]> {
   }, {});
 }
 
+function fallbackIndividualNarrative(input: {
+  employeeName: string;
+  repliedSlots: number;
+  missingSlots: number;
+  totalReplies: number;
+}): string {
+  return [
+    `${input.employeeName} daily summary:`,
+    `Replied slots: ${input.repliedSlots}. Missing slots: ${input.missingSlots}. Total reply fragments: ${input.totalReplies}.`,
+    "Priority: follow up on missed slots and maintain timely structured replies.",
+  ].join(" ");
+}
+
+function fallbackTeamNarrative(input: {
+  totalMembers: number;
+  teamRepliedSlots: number;
+  teamMissingSlots: number;
+  teamReplies: number;
+  reportDate: string;
+}): string {
+  return [
+    `Team daily summary for ${input.reportDate}:`,
+    `Members covered: ${input.totalMembers}. Replied slots: ${input.teamRepliedSlots}. Missing slots: ${input.teamMissingSlots}.`,
+    `Total reply fragments: ${input.teamReplies}.`,
+    "Priority: close response gaps in missing slots and enforce slot-level accountability.",
+  ].join(" ");
+}
+
+function fallbackWeeklyNarrative(input: {
+  start: string;
+  end: string;
+  members: number;
+  replied: number;
+  missing: number;
+  replyRate: number;
+}): string {
+  return [
+    `Weekly team summary (${input.start} to ${input.end}):`,
+    `Members covered: ${input.members}. Replied slots: ${input.replied}. Missing slots: ${input.missing}. Reply rate: ${input.replyRate}%.`,
+    "Priority: reduce missing slot count and improve consistency for next week.",
+  ].join(" ");
+}
+
 export async function generateDailyReports(reportDate: string) {
   const responses = await getSlotResponsesByDate(reportDate);
   const byEmployee = groupBy(responses, (item) => item.employee_id as string);
+
+  // Make daily generation idempotent for the same date.
+  await deleteReportsByDateAndKinds(reportDate, ["individual_daily", "team_daily"]);
+
+  let individualCreated = 0;
+  let individualFailed = 0;
+  const failures: Array<{ employeeId?: string; employeeName?: string; reason: string }> = [];
 
   for (const [employeeId, rows] of Object.entries(byEmployee)) {
     const repliedSlots = rows.filter((row) => !row.is_missing).length;
@@ -39,21 +91,58 @@ export async function generateDailyReports(reportDate: string) {
       })),
     };
 
-    const narrative = await summarizeReport(
-      `Daily individual report for ${employeeName}`,
-      metrics,
-      "Write in English. Keep it concise and operational.",
-    );
-
-    await insertReport({
-      kind: "individual_daily",
-      reportDate,
-      employeeId,
-      title: `Daily report - ${employeeName}`,
-      metrics,
-      narrative,
-      modelName: env.GEMINI_MODEL,
+    let narrative = fallbackIndividualNarrative({
+      employeeName,
+      repliedSlots,
+      missingSlots,
+      totalReplies,
     });
+
+    try {
+      narrative = await summarizeReport(
+        `Daily individual report for ${employeeName}`,
+        metrics,
+        "Write in English. Keep it concise and operational.",
+      );
+    } catch (error) {
+      failures.push({
+        employeeId,
+        employeeName,
+        reason: `AI summary failed: ${(error as Error).message}`,
+      });
+      logError("Individual report AI summary failed", {
+        employeeId,
+        employeeName,
+        reportDate,
+        error: (error as Error).message,
+      });
+    }
+
+    try {
+      await insertReport({
+        kind: "individual_daily",
+        reportDate,
+        employeeId,
+        title: `Daily report - ${employeeName}`,
+        metrics,
+        narrative,
+        modelName: env.GEMINI_MODEL,
+      });
+      individualCreated += 1;
+    } catch (error) {
+      individualFailed += 1;
+      failures.push({
+        employeeId,
+        employeeName,
+        reason: `Insert failed: ${(error as Error).message}`,
+      });
+      logError("Individual report insert failed", {
+        employeeId,
+        employeeName,
+        reportDate,
+        error: (error as Error).message,
+      });
+    }
   }
 
   const totalMembers = Object.keys(byEmployee).length;
@@ -69,25 +158,52 @@ export async function generateDailyReports(reportDate: string) {
     reportDate,
   };
 
-  const teamNarrative = await summarizeReport(
-    `Team daily report for ${reportDate}`,
-    teamMetrics,
-    "Write in English for CEO-level review.",
-  );
-
-  await insertReport({
-    kind: "team_daily",
+  let teamNarrative = fallbackTeamNarrative({
+    totalMembers,
+    teamRepliedSlots,
+    teamMissingSlots,
+    teamReplies,
     reportDate,
-    title: `Team daily summary - ${reportDate}`,
-    metrics: teamMetrics,
-    narrative: teamNarrative,
-    modelName: env.GEMINI_MODEL,
   });
+
+  try {
+    teamNarrative = await summarizeReport(
+      `Team daily report for ${reportDate}`,
+      teamMetrics,
+      "Write in English for CEO-level review.",
+    );
+  } catch (error) {
+    failures.push({ reason: `Team AI summary failed: ${(error as Error).message}` });
+    logError("Team daily AI summary failed", {
+      reportDate,
+      error: (error as Error).message,
+    });
+  }
+
+  try {
+    await insertReport({
+      kind: "team_daily",
+      reportDate,
+      title: `Team daily summary - ${reportDate}`,
+      metrics: teamMetrics,
+      narrative: teamNarrative,
+      modelName: env.GEMINI_MODEL,
+    });
+  } catch (error) {
+    failures.push({ reason: `Team report insert failed: ${(error as Error).message}` });
+    logError("Team daily report insert failed", {
+      reportDate,
+      error: (error as Error).message,
+    });
+  }
 
   return {
     reportDate,
     totalMembers,
     responses: responses.length,
+    individualCreated,
+    individualFailed,
+    failures,
   };
 }
 
@@ -118,11 +234,28 @@ export async function generateWeeklyReport(anchorDate: Date) {
     replyRate: rows.length > 0 ? Number(((replied / rows.length) * 100).toFixed(2)) : 0,
   };
 
-  const narrative = await summarizeReport(
-    `Weekly team report (${range.start} to ${range.end})`,
-    metrics,
-    "Write in English as a weekly executive summary with risks and next-week action points.",
-  );
+  let narrative = fallbackWeeklyNarrative({
+    start: range.start,
+    end: range.end,
+    members: metrics.members,
+    replied,
+    missing,
+    replyRate: metrics.replyRate,
+  });
+
+  try {
+    narrative = await summarizeReport(
+      `Weekly team report (${range.start} to ${range.end})`,
+      metrics,
+      "Write in English as a weekly executive summary with risks and next-week action points.",
+    );
+  } catch (error) {
+    logError("Weekly AI summary failed", {
+      start: range.start,
+      end: range.end,
+      error: (error as Error).message,
+    });
+  }
 
   await insertReport({
     kind: "team_weekly",

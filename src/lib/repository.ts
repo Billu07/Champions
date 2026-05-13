@@ -742,6 +742,18 @@ export async function insertReport(input: {
   ensureNoError(res.error, "Failed to insert report");
 }
 
+export async function deleteReportsByDateAndKinds(reportDate: string, kinds: ReportKind[]) {
+  if (kinds.length === 0) return;
+
+  const res = await supabaseAdmin
+    .from("reports")
+    .delete()
+    .eq("report_date", reportDate)
+    .in("kind", kinds);
+
+  ensureNoError(res.error, "Failed to delete existing reports");
+}
+
 export async function listReports(
   options:
     | number

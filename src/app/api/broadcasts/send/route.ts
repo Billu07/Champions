@@ -59,7 +59,7 @@ export async function POST(request: Request) {
     recipientCount: recipients.length,
   });
 
-  let sent = 0;
+  let accepted = 0;
   let failed = 0;
 
   for (const route of parsed.data.reviewedRoutes) {
@@ -111,7 +111,7 @@ export async function POST(request: Request) {
           messageText: routeMessage,
         });
 
-        sent += 1;
+        accepted += 1;
       } catch (error) {
         await insertBroadcastDelivery({
           campaignId,
@@ -132,7 +132,8 @@ export async function POST(request: Request) {
 
   return ok({
     campaignId,
-    sent,
+    accepted,
+    sent: accepted,
     failed,
     routes: parsed.data.reviewedRoutes.length,
     recipients: recipients.length,

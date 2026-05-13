@@ -9,7 +9,7 @@ export default async function ReportsPage() {
     redirect("/login");
   }
 
-  const reports = await listReports(80);
+  const reports = await listReports(30);
 
   return (
     <main className="page">

@@ -1,7 +1,8 @@
-﻿"use client";
+"use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 const links = [
   { href: "/dashboard", label: "Dashboard" },
@@ -13,6 +14,13 @@ const links = [
 
 export function AdminNav() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  useEffect(() => {
+    for (const link of links) {
+      router.prefetch(link.href);
+    }
+  }, [router]);
 
   return (
     <header className="topbar">
@@ -23,6 +31,7 @@ export function AdminNav() {
             <Link
               key={link.href}
               href={link.href}
+              prefetch
               className={pathname.startsWith(link.href) ? "active" : ""}
             >
               {link.label}
