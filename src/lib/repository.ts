@@ -370,17 +370,26 @@ export async function getTrackedEmployees(): Promise<EmployeeRow[]> {
   });
 }
 
-export async function getTemplateBySlot(slotKey: SlotKey): Promise<{
+export async function getTemplateBySlot(
+  slotKey: SlotKey,
+  options?: { includeInactive?: boolean },
+): Promise<{
   slot_key: SlotKey;
   template_name: string;
   language_code: string;
 } | null> {
-  const res = await supabaseAdmin
+  let query = supabaseAdmin
     .from("message_templates")
-    .select("slot_key,template_name,language_code")
-    .eq("slot_key", slotKey)
-    .eq("is_active", true)
-    .maybeSingle();
+    .select("slot_key,template_name,language_code,is_active,updated_at")
+    .eq("slot_key", slotKey);
+
+  if (!options?.includeInactive) {
+    query = query.eq("is_active", true);
+  } else {
+    query = query.order("is_active", { ascending: false }).order("updated_at", { ascending: false }).limit(1);
+  }
+
+  const res = await query.maybeSingle();
 
   ensureNoError(res.error, "Failed to fetch slot template");
   return (res.data as { slot_key: SlotKey; template_name: string; language_code: string } | null) ?? null;

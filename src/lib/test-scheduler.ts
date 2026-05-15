@@ -264,7 +264,7 @@ async function executeDueSchedule(
         template_name: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
         language_code: "en",
       }
-    : await getTemplateBySlot(payload.templateKey as SlotKey);
+    : await getTemplateBySlot(payload.templateKey as SlotKey, { includeInactive: true });
 
   if (!template) {
     await updateJobRunCompletion({
