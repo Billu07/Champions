@@ -77,6 +77,12 @@ function ensureNoError(error: { message?: string } | null, fallback: string): vo
   if (error) throw new Error(error.message || fallback);
 }
 
+function assertSchedulerEnabled(): void {
+  if (!env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER) {
+    throw new Error("Test scheduler disabled");
+  }
+}
+
 function dedupeIds(ids: string[]): string[] {
   return Array.from(new Set(ids));
 }
@@ -135,6 +141,8 @@ function isDue(payload: SchedulePayload, now: Date): boolean {
 }
 
 export async function createTestSchedule(input: ScheduleCreateInput) {
+  assertSchedulerEnabled();
+
   const parsed = scheduleCreateInputSchema.safeParse({
     ...input,
     recipientEmployeeIds: dedupeIds(input.recipientEmployeeIds),
@@ -191,6 +199,8 @@ export async function createTestSchedule(input: ScheduleCreateInput) {
 }
 
 export async function listTestSchedules(limit = 60): Promise<TestScheduleItem[]> {
+  assertSchedulerEnabled();
+
   const schedulesRes = await supabaseAdmin
     .from("job_runs")
     .select("id,job_key,status,note,payload,created_at,finished_at")
@@ -213,6 +223,8 @@ export async function listTestSchedules(limit = 60): Promise<TestScheduleItem[]>
 }
 
 export async function cancelTestSchedule(id: string): Promise<boolean> {
+  assertSchedulerEnabled();
+
   const parsed = z.string().uuid().safeParse(id);
   if (!parsed.success) {
     throw new Error("Invalid test schedule id");
@@ -342,6 +354,8 @@ async function executeDueSchedule(
 }
 
 export async function dispatchDueTestSchedules(now = new Date()): Promise<DispatchSummary> {
+  assertSchedulerEnabled();
+
   const pendingRes = await supabaseAdmin
     .from("job_runs")
     .select("id,job_key,status,note,payload,created_at,finished_at")

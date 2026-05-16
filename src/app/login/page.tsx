@@ -15,17 +15,21 @@ export default async function LoginPage({
   return (
     <main className="page" style={{ maxWidth: 460 }}>
       <h1>CEO Login</h1>
-      <p>Enter the dashboard password configured in `CEO_PANEL_PASSWORD`.</p>
+      <p>Sign in with the admin username and password from Vercel environment variables.</p>
 
       <form method="post" action="/api/auth/login" className="card grid">
         <label className="grid" style={{ gap: 6 }}>
+          <span>Username</span>
+          <input className="input" type="text" name="username" autoFocus required />
+        </label>
+        <label className="grid" style={{ gap: 6 }}>
           <span>Password</span>
-          <input className="input" type="password" name="password" autoFocus required />
+          <input className="input" type="password" name="password" required />
         </label>
         <button type="submit">Sign In</button>
       </form>
 
-      {params.error ? <p style={{ color: "#b91c1c" }}>Invalid password.</p> : null}
+      {params.error ? <p style={{ color: "#b91c1c" }}>Invalid username or password.</p> : null}
     </main>
   );
 }

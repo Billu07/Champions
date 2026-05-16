@@ -11,6 +11,9 @@ export default async function TestSchedulerPage() {
   if (!(await isLoggedIn())) {
     redirect("/login");
   }
+  if (!env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER) {
+    redirect("/dashboard");
+  }
 
   const [employees, schedules] = await Promise.all([listEmployees(), listTestSchedules()]);
 

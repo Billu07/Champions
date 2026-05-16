@@ -9,10 +9,10 @@ select cron.schedule(
   '0 2 * * 0-4,6',
   $$
   select net.http_post(
-    url := 'https://YOUR_VERCEL_APP_URL/api/jobs/scheduled-send?slot=morning',
+    url := 'https://champions-family-ops.vercel.app/api/jobs/scheduled-send?slot=morning',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'x-cron-secret', 'YOUR_CRON_SECRET'
+      'x-cron-secret', '0891d8d5f6c0c5dcff013eed747ac4c9b5c28cf48dd33ec1c0c11e42f0abba48'
     )
   );
   $$
@@ -23,10 +23,10 @@ select cron.schedule(
   '0 6 * * 0-4,6',
   $$
   select net.http_post(
-    url := 'https://YOUR_VERCEL_APP_URL/api/jobs/scheduled-send?slot=noon',
+    url := 'https://champions-family-ops.vercel.app/api/jobs/scheduled-send?slot=noon',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'x-cron-secret', 'YOUR_CRON_SECRET'
+      'x-cron-secret', '0891d8d5f6c0c5dcff013eed747ac4c9b5c28cf48dd33ec1c0c11e42f0abba48'
     )
   );
   $$
@@ -37,10 +37,10 @@ select cron.schedule(
   '0 9 * * 0-4,6',
   $$
   select net.http_post(
-    url := 'https://YOUR_VERCEL_APP_URL/api/jobs/scheduled-send?slot=afternoon',
+    url := 'https://champions-family-ops.vercel.app/api/jobs/scheduled-send?slot=afternoon',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'x-cron-secret', 'YOUR_CRON_SECRET'
+      'x-cron-secret', '0891d8d5f6c0c5dcff013eed747ac4c9b5c28cf48dd33ec1c0c11e42f0abba48'
     )
   );
   $$
@@ -51,10 +51,10 @@ select cron.schedule(
   '30 11 * * 0-4,6',
   $$
   select net.http_post(
-    url := 'https://YOUR_VERCEL_APP_URL/api/jobs/scheduled-send?slot=evening',
+    url := 'https://champions-family-ops.vercel.app/api/jobs/scheduled-send?slot=evening',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'x-cron-secret', 'YOUR_CRON_SECRET'
+      'x-cron-secret', '0891d8d5f6c0c5dcff013eed747ac4c9b5c28cf48dd33ec1c0c11e42f0abba48'
     )
   );
   $$
@@ -66,10 +66,10 @@ select cron.schedule(
   '45 12 * * 0-4,6',
   $$
   select net.http_post(
-    url := 'https://YOUR_VERCEL_APP_URL/api/jobs/generate-daily-report',
+    url := 'https://champions-family-ops.vercel.app/api/jobs/generate-daily-report',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'x-cron-secret', 'YOUR_CRON_SECRET'
+      'x-cron-secret', '0891d8d5f6c0c5dcff013eed747ac4c9b5c28cf48dd33ec1c0c11e42f0abba48'
     )
   );
   $$
@@ -81,10 +81,25 @@ select cron.schedule(
   '0 14 * * 4',
   $$
   select net.http_post(
-    url := 'https://YOUR_VERCEL_APP_URL/api/jobs/generate-weekly-report',
+    url := 'https://champions-family-ops.vercel.app/api/jobs/generate-weekly-report',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'x-cron-secret', 'YOUR_CRON_SECRET'
+      'x-cron-secret', '0891d8d5f6c0c5dcff013eed747ac4c9b5c28cf48dd33ec1c0c11e42f0abba48'
+    )
+  );
+  $$
+);
+
+-- Monthly report at 20:15 Asia/Dhaka on day 1 of each month (14:15 UTC).
+select cron.schedule(
+  'cf_generate_monthly_report',
+  '15 14 1 * *',
+  $$
+  select net.http_post(
+    url := 'https://champions-family-ops.vercel.app/api/jobs/generate-monthly-report',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-cron-secret', '0891d8d5f6c0c5dcff013eed747ac4c9b5c28cf48dd33ec1c0c11e42f0abba48'
     )
   );
   $$

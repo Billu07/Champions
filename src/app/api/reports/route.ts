@@ -6,7 +6,7 @@ import { listReports } from "@/lib/repository";
 
 const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(300).default(60),
-  kind: z.enum(["individual_daily", "team_daily", "team_weekly", "all"]).default("all"),
+  kind: z.enum(["individual_daily", "team_daily", "team_weekly", "team_monthly", "all"]).default("all"),
   from: z.string().optional(),
   to: z.string().optional(),
 });

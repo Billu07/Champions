@@ -1,4 +1,13 @@
-﻿import { z } from "zod";
+import { z } from "zod";
+
+const envBoolean = z.preprocess((value) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return ["1", "true", "yes", "on"].includes(normalized);
+  }
+  return false;
+}, z.boolean());
 
 const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
@@ -17,7 +26,15 @@ const envSchema = z.object({
   GEMINI_API_KEY: z.string().min(1),
   GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
   NEXT_PUBLIC_APP_TIMEZONE: z.string().default("Asia/Dhaka"),
-  CEO_PANEL_PASSWORD: z.string().min(1),
+  NEXT_PUBLIC_ENABLE_TEST_SCHEDULER: envBoolean.default(false),
+  ADMIN_LOGIN_USERNAME: z.string().min(3).default("admin"),
+  ADMIN_LOGIN_PASSWORD: z.string().min(8).optional(),
+  ADMIN_PASSWORD_HASH: z.string().min(32).optional(),
+  ADMIN_PASSWORD_SALT: z.string().min(8).optional(),
+  ADMIN_SESSION_SECRET: z.string().min(32).optional(),
+  CEO_PANEL_PASSWORD: z.string().optional(),
+  REPORT_BRAND_NAME: z.string().default("Champions Family"),
+  REPORT_BRAND_TAGLINE: z.string().default("Operational Messaging Intelligence"),
 });
 
 export const env = envSchema.parse({
@@ -35,5 +52,13 @@ export const env = envSchema.parse({
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   GEMINI_MODEL: process.env.GEMINI_MODEL,
   NEXT_PUBLIC_APP_TIMEZONE: process.env.NEXT_PUBLIC_APP_TIMEZONE,
+  NEXT_PUBLIC_ENABLE_TEST_SCHEDULER: process.env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER,
+  ADMIN_LOGIN_USERNAME: process.env.ADMIN_LOGIN_USERNAME,
+  ADMIN_LOGIN_PASSWORD: process.env.ADMIN_LOGIN_PASSWORD,
+  ADMIN_PASSWORD_HASH: process.env.ADMIN_PASSWORD_HASH,
+  ADMIN_PASSWORD_SALT: process.env.ADMIN_PASSWORD_SALT,
+  ADMIN_SESSION_SECRET: process.env.ADMIN_SESSION_SECRET,
   CEO_PANEL_PASSWORD: process.env.CEO_PANEL_PASSWORD,
+  REPORT_BRAND_NAME: process.env.REPORT_BRAND_NAME,
+  REPORT_BRAND_TAGLINE: process.env.REPORT_BRAND_TAGLINE,
 });

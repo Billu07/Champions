@@ -88,4 +88,4 @@ export type BroadcastSendRequest = {
   allowEmptyRecipients?: boolean;
 };
 
-export type ReportKind = "individual_daily" | "team_daily" | "team_weekly";
+export type ReportKind = "individual_daily" | "team_daily" | "team_weekly" | "team_monthly";

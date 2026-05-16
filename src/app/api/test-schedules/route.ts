@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { fail, ok } from "@/lib/http";
 import { requestHasAdminSession } from "@/lib/auth";
+import { env } from "@/lib/config";
 import { createTestSchedule, listTestSchedules } from "@/lib/test-scheduler";
 
 const createSchema = z.object({
@@ -14,6 +15,9 @@ export async function GET(request: Request) {
   if (!(await requestHasAdminSession(request))) {
     return fail("Unauthorized", 401);
   }
+  if (!env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER) {
+    return fail("Test scheduler disabled", 404);
+  }
 
   try {
     const schedules = await listTestSchedules();
@@ -26,6 +30,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   if (!(await requestHasAdminSession(request))) {
     return fail("Unauthorized", 401);
+  }
+  if (!env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER) {
+    return fail("Test scheduler disabled", 404);
   }
 
   try {

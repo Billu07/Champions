@@ -107,7 +107,7 @@ execute function public.set_updated_at();
 
 create table if not exists public.reports (
   id uuid primary key default gen_random_uuid(),
-  kind text not null check (kind in ('individual_daily','team_daily','team_weekly')),
+  kind text not null check (kind in ('individual_daily','team_daily','team_weekly','team_monthly')),
   report_date date not null,
   employee_id uuid references public.employees(id) on delete set null,
   title text not null,

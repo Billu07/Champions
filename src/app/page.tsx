@@ -1,5 +1,6 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { isLoggedIn } from "@/lib/auth";
+import { env } from "@/lib/config";
 
 const cards = [
   {
@@ -16,20 +17,28 @@ const cards = [
   },
   {
     title: "AI Reporting",
-    text: "Individual daily, team daily, and weekly reports are generated and stored.",
+    text: "Individual daily, team daily, weekly, and monthly reports are generated and stored.",
   },
   {
     title: "CEO Broadcast",
     text: "Targeted sends by member, tags, or mention-detected recipients with confirmation.",
   },
-  {
-    title: "Test Scheduler",
-    text: "Frontend queue for scheduling slot-template test sends to selected users.",
-  },
 ];
 
 export default async function HomePage() {
   const loggedIn = await isLoggedIn();
+
+  const allCards = [
+    ...cards,
+    ...(env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER
+      ? [
+          {
+            title: "Test Scheduler",
+            text: "Frontend queue for scheduling slot-template test sends to selected users.",
+          },
+        ]
+      : []),
+  ];
 
   return (
     <main className="page">
@@ -40,9 +49,9 @@ export default async function HomePage() {
             <>
               <Link href="/dashboard">Dashboard</Link>
               <Link href="/employees">Employees</Link>
-              <Link href="/test-scheduler">Test Scheduler</Link>
               <Link href="/broadcasts">Broadcasts</Link>
               <Link href="/reports">Reports</Link>
+              {env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER ? <Link href="/test-scheduler">Test Scheduler</Link> : null}
             </>
           ) : (
             <Link href="/login">Login</Link>
@@ -56,7 +65,7 @@ export default async function HomePage() {
       </p>
 
       <section className="grid cards" style={{ marginTop: 16 }}>
-        {cards.map((card) => (
+        {allCards.map((card) => (
           <article className="card" key={card.title}>
             <h2>{card.title}</h2>
             <p>{card.text}</p>

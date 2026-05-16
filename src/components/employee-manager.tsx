@@ -49,15 +49,18 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
   const [form, setForm] = useState(defaultForm);
   const [filterTag, setFilterTag] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("all");
+  const [filterTracking, setFilterTracking] = useState<"all" | "tracked" | "untracked">("all");
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [newTagKey, setNewTagKey] = useState("");
   const [newTagLabel, setNewTagLabel] = useState("");
 
   const editing = Boolean(form.id);
 
   async function load() {
+    setLoading(true);
     const [employeeRes, tagRes] = await Promise.all([
       fetch("/api/employees", { cache: "no-store" }),
       fetch("/api/tags", { cache: "no-store" }),
@@ -66,8 +69,19 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
     const employeeJson = await employeeRes.json().catch(() => ({}));
     const tagJson = await tagRes.json().catch(() => ({}));
 
+    if (!employeeRes.ok || !tagRes.ok) {
+      setMessage(
+        (employeeJson as { error?: string }).error
+          ?? (tagJson as { error?: string }).error
+          ?? "Failed to refresh employee data",
+      );
+      setLoading(false);
+      return;
+    }
+
     setEmployees((employeeJson as { employees?: Employee[] }).employees ?? []);
     setTags((tagJson as { tags?: Tag[] }).tags ?? []);
+    setLoading(false);
   }
 
   function resetForm() {
@@ -188,6 +202,8 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
     return employees.filter((employee) => {
       if (filterStatus === "active" && !employee.is_active) return false;
       if (filterStatus === "inactive" && employee.is_active) return false;
+      if (filterTracking === "tracked" && !employee.tracking_enabled) return false;
+      if (filterTracking === "untracked" && employee.tracking_enabled) return false;
 
       if (filterTag !== "all") {
         const hasTag = employee.tags.some((tag) => tag.key === filterTag);
@@ -209,7 +225,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
 
       return haystack.includes(q);
     });
-  }, [employees, filterStatus, filterTag, search]);
+  }, [employees, filterStatus, filterTag, filterTracking, search]);
 
   const stats = useMemo(() => {
     const active = employees.filter((item) => item.is_active).length;
@@ -409,8 +425,18 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
       </article>
 
       <article className="card grid" style={{ gap: 10 }}>
+        <div className="inline" style={{ justifyContent: "space-between" }}>
+          <h2>Directory</h2>
+          <div className="inline">
+            <span className="muted">Showing {filteredEmployees.length} of {employees.length}</span>
+            <button className="ghost" type="button" onClick={() => void load()} disabled={loading}>
+              {loading ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+        </div>
+
         <div className="row">
-          <label className="col-4 grid" style={{ gap: 6 }}>
+          <label className="col-3 grid" style={{ gap: 6 }}>
             <span>Search</span>
             <input
               className="input"
@@ -420,7 +446,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
             />
           </label>
 
-          <label className="col-4 grid" style={{ gap: 6 }}>
+          <label className="col-3 grid" style={{ gap: 6 }}>
             <span>Tag Filter</span>
             <select value={filterTag} onChange={(event) => setFilterTag(event.target.value)}>
               <option value="all">All tags</option>
@@ -432,7 +458,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
             </select>
           </label>
 
-          <label className="col-4 grid" style={{ gap: 6 }}>
+          <label className="col-3 grid" style={{ gap: 6 }}>
             <span>Status Filter</span>
             <select
               value={filterStatus}
@@ -441,6 +467,18 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
               <option value="all">All</option>
               <option value="active">Active only</option>
               <option value="inactive">Inactive only</option>
+            </select>
+          </label>
+
+          <label className="col-3 grid" style={{ gap: 6 }}>
+            <span>Tracking Filter</span>
+            <select
+              value={filterTracking}
+              onChange={(event) => setFilterTracking(event.target.value as "all" | "tracked" | "untracked")}
+            >
+              <option value="all">All</option>
+              <option value="tracked">Tracking enabled</option>
+              <option value="untracked">Tracking disabled</option>
             </select>
           </label>
         </div>

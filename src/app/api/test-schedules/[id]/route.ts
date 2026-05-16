@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { requestHasAdminSession } from "@/lib/auth";
+import { env } from "@/lib/config";
 import { fail, ok } from "@/lib/http";
 import { cancelTestSchedule } from "@/lib/test-scheduler";
 
@@ -9,6 +10,10 @@ export async function DELETE(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  if (!env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER) {
+    return fail("Test scheduler disabled", 404);
+  }
+
   if (!(await requestHasAdminSession(request))) {
     return fail("Unauthorized", 401);
   }

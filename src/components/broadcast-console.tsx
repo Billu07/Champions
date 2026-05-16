@@ -65,6 +65,8 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
   const [useEnhancedForFallback, setUseEnhancedForFallback] = useState(true);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<string>("");
+  const [sending, setSending] = useState(false);
+  const [previewGeneratedAt, setPreviewGeneratedAt] = useState<string>("");
   const reviewRef = useRef<HTMLElement | null>(null);
 
   const employeesById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
@@ -91,6 +93,10 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
     }
     return ids.size;
   }, [preview, enabledRouteIds]);
+
+  const selectedRecipientsCount = useMemo(() => {
+    return new Set(selectedEmployeeIds).size;
+  }, [selectedEmployeeIds]);
 
   async function onPreview(event: FormEvent) {
     event.preventDefault();
@@ -122,6 +128,7 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
 
     const parsed = json as PreviewResponse;
     setPreview(parsed);
+    setPreviewGeneratedAt(new Date().toLocaleString());
     setEnhancedMessageDraft(parsed.enhancedMessage);
     setRouteMessageDrafts(
       Object.fromEntries(parsed.routes.map((route) => [route.routeId, route.instruction])),
@@ -136,59 +143,83 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
 
   async function onSend() {
     if (!preview) return;
+    setSending(true);
+    try {
+      const reviewedRoutes = preview.routes
+        .filter((route) => enabledRouteIds.includes(route.routeId))
+        .map((route) => {
+          const draft = (routeMessageDrafts[route.routeId] ?? route.instruction).trim();
+          const fallbackEnhance = route.source === "manual" || route.source === "tag" || route.source === "mixed";
 
-    const reviewedRoutes = preview.routes
-      .filter((route) => enabledRouteIds.includes(route.routeId))
-      .map((route) => {
-        const draft = (routeMessageDrafts[route.routeId] ?? route.instruction).trim();
-        const fallbackEnhance = route.source === "manual" || route.source === "tag" || route.source === "mixed";
+          return {
+            routeId: route.routeId,
+            targetLabel: route.targetLabel,
+            source: route.source,
+            recipientEmployeeIds: route.recipientEmployeeIds,
+            message:
+              draft ||
+              (useEnhancedForFallback && fallbackEnhance ? enhancedMessageDraft : message),
+          };
+        })
+        .filter((route) => route.recipientEmployeeIds.length > 0 && route.message.length > 0);
 
-        return {
-          routeId: route.routeId,
-          targetLabel: route.targetLabel,
-          source: route.source,
-          recipientEmployeeIds: route.recipientEmployeeIds,
-          message:
-            draft ||
-            (useEnhancedForFallback && fallbackEnhance ? enhancedMessageDraft : message),
-        };
-      })
-      .filter((route) => route.recipientEmployeeIds.length > 0 && route.message.length > 0);
+      if (reviewedRoutes.length === 0) {
+        setStatus("No valid reviewed routes selected for sending.");
+        return;
+      }
 
-    if (reviewedRoutes.length === 0) {
-      setStatus("No valid reviewed routes selected for sending.");
-      return;
+      setStatus("Sending template broadcast...");
+
+      const res = await fetch("/api/broadcasts/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          originalMessage: message,
+          finalMessage: useEnhancedForFallback ? enhancedMessageDraft : message,
+          audienceCategory,
+          reviewedRoutes,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setStatus((json as { error?: string }).error ?? "Broadcast failed");
+        return;
+      }
+
+      const accepted = Number((json as { accepted?: number; sent?: number }).accepted ?? (json as { sent?: number }).sent ?? 0);
+      const failed = Number((json as { failed?: number }).failed ?? 0);
+      setStatus(
+        `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}. Final delivery updates from webhook status.`,
+      );
+    } finally {
+      setSending(false);
     }
-
-    setStatus("Sending template broadcast...");
-
-    const res = await fetch("/api/broadcasts/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        originalMessage: message,
-        finalMessage: useEnhancedForFallback ? enhancedMessageDraft : message,
-        audienceCategory,
-        reviewedRoutes,
-      }),
-    });
-
-    const json = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      setStatus((json as { error?: string }).error ?? "Broadcast failed");
-      return;
-    }
-
-    const accepted = Number((json as { accepted?: number; sent?: number }).accepted ?? (json as { sent?: number }).sent ?? 0);
-    const failed = Number((json as { failed?: number }).failed ?? 0);
-    setStatus(
-      `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}. Final delivery updates from webhook status.`,
-    );
   }
 
   return (
     <section className="grid" style={{ gap: 16 }}>
+      <div className="kpi-grid">
+        <article className="card kpi-card">
+          <p className="kpi-label">Active Members</p>
+          <p className="kpi-value">{employees.length}</p>
+        </article>
+        <article className="card kpi-card">
+          <p className="kpi-label">Manual Selected</p>
+          <p className="kpi-value">{selectedRecipientsCount}</p>
+        </article>
+        <article className="card kpi-card">
+          <p className="kpi-label">Tags Selected</p>
+          <p className="kpi-value">{selectedTagKeys.length}</p>
+        </article>
+        <article className="card kpi-card">
+          <p className="kpi-label">Preview Routes</p>
+          <p className="kpi-value">{preview?.routes.length ?? 0}</p>
+          <p className="kpi-sub">Recipients reach: {routeRecipientCount}</p>
+        </article>
+      </div>
+
       <form className="card grid" onSubmit={onPreview} style={{ gap: 12 }}>
         <h2>CEO Broadcast Composer</h2>
         <p>
@@ -317,6 +348,7 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
             <h2>Enhanced Message + Recipients</h2>
             <p>
               Enabled routes: {enabledRouteIds.length} | Recipient reach: {routeRecipientCount}
+              {previewGeneratedAt ? ` | Previewed: ${previewGeneratedAt}` : ""}
             </p>
           </div>
 
@@ -412,7 +444,9 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
           </div>
 
           <div className="inline">
-            <button onClick={onSend}>Send Broadcast</button>
+            <button onClick={onSend} disabled={sending}>
+              {sending ? "Sending..." : "Send Broadcast"}
+            </button>
             <span className="muted">Template: {templateName}</span>
           </div>
         </article>

@@ -1,6 +1,6 @@
 import { fail, ok } from "@/lib/http";
 import { assertCronSecret } from "@/lib/auth";
-import { generateWeeklyReport } from "@/lib/reporting";
+import { generateMonthlyReport } from "@/lib/reporting";
 
 export async function POST(request: Request) {
   try {
@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     }
 
     const anchorDate = dateParam ? new Date(`${dateParam}T12:00:00.000Z`) : new Date();
-    const result = await generateWeeklyReport(anchorDate);
+    const result = await generateMonthlyReport(anchorDate);
     return ok({ ok: true, result });
   } catch (error) {
     return fail((error as Error).message, 401);

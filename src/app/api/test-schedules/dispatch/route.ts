@@ -1,4 +1,5 @@
 import { assertCronSecret, requestHasAdminSession } from "@/lib/auth";
+import { env } from "@/lib/config";
 import { fail, ok } from "@/lib/http";
 import { dispatchDueTestSchedules } from "@/lib/test-scheduler";
 
@@ -14,6 +15,10 @@ async function isAuthorized(request: Request): Promise<boolean> {
 }
 
 export async function POST(request: Request) {
+  if (!env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER) {
+    return fail("Test scheduler disabled", 404);
+  }
+
   if (!(await isAuthorized(request))) {
     return fail("Unauthorized", 401);
   }

@@ -173,6 +173,7 @@ p {
   border-radius: 14px;
   border: 1px solid var(--border);
   background: #fff;
+  max-width: 100%;
 }
 
 table {
@@ -194,6 +195,12 @@ th {
   background: #f5f8fc;
   color: #2f3f54;
   font-weight: 700;
+}
+
+.table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 input,
@@ -364,5 +371,15 @@ details summary {
   .col-4,
   .col-3 {
     grid-column: span 12;
+  }
+
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .kpi-grid {
+    grid-template-columns: 1fr;
   }
 }

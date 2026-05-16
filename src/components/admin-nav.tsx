@@ -4,13 +4,23 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
-const links = [
+const testSchedulerEnabled = process.env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER === "true";
+
+type NavLink = {
+  href: "/dashboard" | "/employees" | "/broadcasts" | "/reports" | "/test-scheduler";
+  label: string;
+};
+
+const links: NavLink[] = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/employees", label: "Employees" },
-  { href: "/test-scheduler", label: "Test Scheduler" },
   { href: "/broadcasts", label: "Broadcasts" },
   { href: "/reports", label: "Reports" },
-] as const;
+];
+
+if (testSchedulerEnabled) {
+  links.push({ href: "/test-scheduler", label: "Test Scheduler" });
+}
 
 export function AdminNav() {
   const pathname = usePathname();

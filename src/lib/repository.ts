@@ -846,7 +846,11 @@ export async function listRecentBroadcastCampaigns(limit = 25) {
   });
 }
 
-export async function getOpsDashboardMetrics(trackingDate: string) {
+export async function getOpsDashboardMetrics(
+  trackingDate: string,
+  options?: { includeTestScheduler?: boolean },
+) {
+  const includeTestScheduler = options?.includeTestScheduler ?? true;
   const employees = await listEmployees();
   const activeEmployees = employees.filter((employee) => employee.is_active);
   const trackedActiveEmployees = activeEmployees.filter((employee) => employee.tracking_enabled);
@@ -868,12 +872,16 @@ export async function getOpsDashboardMetrics(trackingDate: string) {
     .eq("report_date", trackingDate);
   ensureNoError(reportsRes.error, "Failed to load report metrics");
 
-  const runningSchedulesRes = await supabaseAdmin
-    .from("job_runs")
-    .select("id", { count: "exact", head: true })
-    .eq("job_type", "test_scheduled_send")
-    .eq("status", "running");
-  ensureNoError(runningSchedulesRes.error, "Failed to load test schedule metrics");
+  let pendingTestJobs = 0;
+  if (includeTestScheduler) {
+    const runningSchedulesRes = await supabaseAdmin
+      .from("job_runs")
+      .select("id", { count: "exact", head: true })
+      .eq("job_type", "test_scheduled_send")
+      .eq("status", "running");
+    ensureNoError(runningSchedulesRes.error, "Failed to load test schedule metrics");
+    pendingTestJobs = runningSchedulesRes.count ?? 0;
+  }
 
   const recentDeliveriesRes = await supabaseAdmin
     .from("broadcast_deliveries")
@@ -903,7 +911,7 @@ export async function getOpsDashboardMetrics(trackingDate: string) {
       generatedToday: reportsRes.count ?? 0,
     },
     testScheduler: {
-      pendingJobs: runningSchedulesRes.count ?? 0,
+      pendingJobs: pendingTestJobs,
     },
     broadcast24h: {
       deliveries: recentDeliveriesRes.count ?? recentDeliveries.length,
@@ -927,11 +935,33 @@ export async function getSlotResponsesByDate(trackingDate: string) {
 export async function getSlotResponsesInRange(startDate: string, endDate: string) {
   const res = await supabaseAdmin
     .from("slot_responses")
-    .select("id,employee_id,tracking_date,slot_key,merged_text,reply_count,is_missing,employees:employee_id(full_name)")
+    .select(
+      "id,employee_id,tracking_date,slot_key,merged_text,reply_count,is_missing,first_reply_at,last_reply_at,employees:employee_id(full_name)",
+    )
     .gte("tracking_date", startDate)
     .lte("tracking_date", endDate)
     .order("tracking_date", { ascending: true });
 
   ensureNoError(res.error, "Failed to list slot responses by range");
   return res.data ?? [];
+}
+
+export async function purgeLegacyOperationalData() {
+  const orderedTables = [
+    "broadcast_delivery_events",
+    "broadcast_deliveries",
+    "broadcast_campaigns",
+    "mention_resolution_audit",
+    "reports",
+    "slot_responses",
+    "message_events",
+    "job_runs",
+  ];
+
+  for (const table of orderedTables) {
+    const res = await supabaseAdmin.from(table).delete().not("id", "is", null);
+    ensureNoError(res.error, `Failed to purge table ${table}`);
+  }
+
+  return { clearedTables: orderedTables };
 }

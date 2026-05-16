@@ -12,7 +12,9 @@ export default async function DashboardPage() {
 
   const trackingDate = dhakaDateISO(new Date(), env.NEXT_PUBLIC_APP_TIMEZONE);
   const [metrics, campaigns, reports] = await Promise.all([
-    getOpsDashboardMetrics(trackingDate),
+    getOpsDashboardMetrics(trackingDate, {
+      includeTestScheduler: env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER,
+    }),
     listRecentBroadcastCampaigns(10),
     listReports({ limit: 8, kind: "all" }),
   ]);
@@ -22,7 +24,7 @@ export default async function DashboardPage() {
       <AdminNav />
       <h1>Operations Dashboard</h1>
       <p>
-        Daily operational health across scheduling, replies, broadcasts, and reports.
+        Daily operational health across scheduling, replies, broadcasts, and daily/weekly/monthly reporting.
       </p>
 
       <section className="kpi-grid" style={{ marginTop: 14 }}>
@@ -57,11 +59,13 @@ export default async function DashboardPage() {
             Total reply fragments: {metrics.responses.totalReplyFragments}
           </p>
         </article>
-        <article className="card kpi-card">
-          <p className="kpi-label">Pending Test Schedules</p>
-          <p className="kpi-value">{metrics.testScheduler.pendingJobs}</p>
-          <p className="kpi-sub">Queue currently in running state</p>
-        </article>
+        {env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER ? (
+          <article className="card kpi-card">
+            <p className="kpi-label">Pending Test Schedules</p>
+            <p className="kpi-value">{metrics.testScheduler.pendingJobs}</p>
+            <p className="kpi-sub">Queue currently in running state</p>
+          </article>
+        ) : null}
       </section>
 
       <section className="grid" style={{ gap: 12, marginTop: 16 }}>
