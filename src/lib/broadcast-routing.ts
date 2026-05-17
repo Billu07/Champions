@@ -54,6 +54,7 @@ export type BroadcastPreviewBuildResult = {
     mentionExtraction: {
       usedFallback: boolean;
       error: string | null;
+      enabled: boolean;
     };
     messageRewrite: {
       usedFallback: boolean;
@@ -61,6 +62,11 @@ export type BroadcastPreviewBuildResult = {
     };
   };
 };
+
+function isQuotaError(message: string | null | undefined): boolean {
+  const value = String(message ?? "").toLowerCase();
+  return value.includes("429") || value.includes("quota") || value.includes("rate limit");
+}
 
 const CATEGORY_TO_TAG: Record<Exclude<BroadcastAudienceCategory, "all" | "custom">, string> = {
   sales_team: "sales_field",
@@ -143,9 +149,7 @@ export async function buildBroadcastPreview(
 ): Promise<BroadcastPreviewBuildResult> {
   const activeEmployees = employees.filter((employee) => employee.is_active);
   const activeById = new Map(activeEmployees.map((employee) => [employee.id, employee]));
-
-  const mentionResult = await resolveMentions(input.message, activeEmployees);
-  const mentionIds = dedupeIds(mentionResult.matches.map((match) => match.employeeId));
+  const mentionAiEnabled = false;
 
   const selectedIds = dedupeIds(input.selectedEmployeeIds).filter((id) => activeById.has(id));
   const tagIds = activeEmployees
@@ -162,6 +166,12 @@ export async function buildBroadcastPreview(
         meta: { usedFallback: false, error: null },
       };
   const aiRoutes = aiRouteResult.routes;
+
+  const mentionResult = await resolveMentions(input.message, activeEmployees, {
+    useAiExtraction: mentionAiEnabled,
+  });
+  const mentionIds = dedupeIds(mentionResult.matches.map((match) => match.employeeId));
+
   const previewRoutes: BroadcastPreviewRoute[] = [];
   const unresolvedAiTargets: string[] = [];
   const coveredByAi = new Set<string>();
@@ -245,7 +255,15 @@ export async function buildBroadcastPreview(
   }
 
   const recipients = dedupeIds(previewRoutes.flatMap((route) => route.recipientEmployeeIds));
-  const enhancedResult = await enhanceCeoMessageWithMeta(input.message);
+  const enhancedResult = isQuotaError(aiRouteResult.meta.error)
+    ? {
+        text: input.message.trim(),
+        meta: {
+          usedFallback: true,
+          error: "Skipped rewrite because AI quota is currently exceeded",
+        },
+      }
+    : await enhanceCeoMessageWithMeta(input.message);
 
   return {
     routes: previewRoutes,
@@ -264,6 +282,7 @@ export async function buildBroadcastPreview(
       mentionExtraction: {
         usedFallback: mentionResult.aiMeta.usedFallback,
         error: mentionResult.aiMeta.error,
+        enabled: mentionAiEnabled,
       },
       messageRewrite: {
         usedFallback: enhancedResult.meta.usedFallback,

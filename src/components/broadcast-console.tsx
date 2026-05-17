@@ -28,6 +28,7 @@ type PreviewResponse = {
     mentionExtraction: {
       usedFallback: boolean;
       error: string | null;
+      enabled: boolean;
     };
     messageRewrite: {
       usedFallback: boolean;
@@ -88,7 +89,7 @@ function previewWarnings(preview: PreviewResponse | null): string[] {
     warnings.push(`Route AI fallback: ${route.error || "AI route extraction unavailable"}`);
   }
 
-  if (mention.usedFallback) {
+  if (mention.enabled && mention.usedFallback) {
     warnings.push(`Mention AI fallback: ${mention.error || "AI mention extraction unavailable"}`);
   }
 

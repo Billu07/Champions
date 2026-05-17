@@ -91,6 +91,9 @@ export function resolveNames(
 export async function resolveMentions(
   message: string,
   employees: EmployeeLike[],
+  options?: {
+    useAiExtraction?: boolean;
+  },
 ): Promise<{
   extractedNames: string[];
   matches: MentionMatch[];
@@ -100,7 +103,16 @@ export async function resolveMentions(
     error: string | null;
   };
 }> {
-  const extracted = await extractMentionNamesWithMeta(message);
+  const useAiExtraction = options?.useAiExtraction ?? false;
+  const extracted = useAiExtraction
+    ? await extractMentionNamesWithMeta(message)
+    : {
+        names: [] as string[],
+        meta: {
+          usedFallback: false,
+          error: null,
+        },
+      };
 
   const explicitMentions = Array.from(
     message.matchAll(/@([a-zA-Z0-9 ._-]{2,60})/g),
