@@ -2,6 +2,7 @@ import { z } from "zod";
 import { fail, ok } from "@/lib/http";
 import { requestHasAdminSession } from "@/lib/auth";
 import { buildBroadcastPreview } from "@/lib/broadcast-routing";
+import { logError } from "@/lib/logger";
 import { insertMentionAudit, listEmployees } from "@/lib/repository";
 import type { BroadcastPreviewRequest } from "@/lib/types";
 
@@ -25,45 +26,58 @@ export async function POST(request: Request) {
     return fail(parsed.error.issues[0]?.message ?? "Invalid payload", 400);
   }
 
-  const allEmployees = await listEmployees();
+  try {
+    const allEmployees = await listEmployees();
 
-  const preview = await buildBroadcastPreview(
-    {
-      message: parsed.data.message,
-      audienceCategory: parsed.data.audienceCategory,
-      selectedEmployeeIds: parsed.data.selectedEmployeeIds,
-      selectedTagKeys: parsed.data.selectedTagKeys,
-      useAiRouting: parsed.data.useAiRouting,
-    },
-    allEmployees,
-  );
+    const preview = await buildBroadcastPreview(
+      {
+        message: parsed.data.message,
+        audienceCategory: parsed.data.audienceCategory,
+        selectedEmployeeIds: parsed.data.selectedEmployeeIds,
+        selectedTagKeys: parsed.data.selectedTagKeys,
+        useAiRouting: parsed.data.useAiRouting,
+      },
+      allEmployees,
+    );
 
-  await insertMentionAudit({
-    messageBody: parsed.data.message,
-    extractedNames: preview.extractedMentionNames,
-    resolvedEmployeeIds: preview.mentionMatches.map((item) => item.employeeId),
-    unresolvedNames: preview.unresolvedMentions,
-  });
+    try {
+      await insertMentionAudit({
+        messageBody: parsed.data.message,
+        extractedNames: preview.extractedMentionNames,
+        resolvedEmployeeIds: preview.mentionMatches.map((item) => item.employeeId),
+        unresolvedNames: preview.unresolvedMentions,
+      });
+    } catch (error) {
+      logError("Mention audit insert failed", {
+        error: (error as Error).message,
+      });
+    }
 
-  const employeesById = new Map(allEmployees.map((employee) => [employee.id, employee]));
-  const recipients = preview.recipients
-    .map((id) => employeesById.get(id))
-    .filter((employee): employee is (typeof allEmployees)[number] => Boolean(employee))
-    .map((employee) => ({
-      id: employee.id,
-      full_name: employee.full_name,
-      whatsapp_e164: employee.whatsapp_e164,
-      department: employee.department,
-      designation: employee.designation,
-      tags: employee.tags,
-    }));
+    const employeesById = new Map(allEmployees.map((employee) => [employee.id, employee]));
+    const recipients = preview.recipients
+      .map((id) => employeesById.get(id))
+      .filter((employee): employee is (typeof allEmployees)[number] => Boolean(employee))
+      .map((employee) => ({
+        id: employee.id,
+        full_name: employee.full_name,
+        whatsapp_e164: employee.whatsapp_e164,
+        department: employee.department,
+        designation: employee.designation,
+        tags: employee.tags,
+      }));
 
-  return ok({
-    recipients,
-    routes: preview.routes,
-    mentionMatches: preview.mentionMatches,
-    unresolvedMentions: preview.unresolvedMentions,
-    unresolvedAiTargets: preview.unresolvedAiTargets,
-    enhancedMessage: preview.enhancedMessage,
-  });
+    return ok({
+      recipients,
+      routes: preview.routes,
+      mentionMatches: preview.mentionMatches,
+      unresolvedMentions: preview.unresolvedMentions,
+      unresolvedAiTargets: preview.unresolvedAiTargets,
+      enhancedMessage: preview.enhancedMessage,
+    });
+  } catch (error) {
+    logError("Broadcast preview failed", {
+      error: (error as Error).message,
+    });
+    return fail((error as Error).message || "Failed to generate broadcast preview", 500);
+  }
 }

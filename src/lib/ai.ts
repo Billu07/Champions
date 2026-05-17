@@ -6,6 +6,11 @@ type GeminiResponse = {
       parts?: Array<{ text?: string }>;
     };
   }>;
+  error?: {
+    message?: string;
+    code?: number;
+    status?: string;
+  };
 };
 
 export type AiInstructionRoute = {
@@ -40,7 +45,10 @@ async function runGemini(prompt: string, asJson = false): Promise<string> {
   const data = (await response.json().catch(() => ({}))) as GeminiResponse;
 
   if (!response.ok) {
-    throw new Error("Gemini request failed");
+    const details = data.error?.message?.trim();
+    const statusText = response.statusText?.trim();
+    const extra = details || statusText || "Unknown Gemini error";
+    throw new Error(`Gemini request failed (${response.status}): ${extra}`);
   }
 
   const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
@@ -64,7 +72,12 @@ export async function enhanceCeoMessage(input: string): Promise<string> {
     `Message:\n${input}`,
   ].join("\n");
 
-  return runGemini(prompt, false);
+  try {
+    const output = await runGemini(prompt, false);
+    return output || input.trim();
+  } catch {
+    return input.trim();
+  }
 }
 
 export async function extractMentionNames(message: string): Promise<string[]> {
