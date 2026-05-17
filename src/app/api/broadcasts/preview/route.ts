@@ -73,6 +73,7 @@ export async function POST(request: Request) {
       unresolvedMentions: preview.unresolvedMentions,
       unresolvedAiTargets: preview.unresolvedAiTargets,
       enhancedMessage: preview.enhancedMessage,
+      aiDiagnostics: preview.aiDiagnostics,
     });
   } catch (error) {
     logError("Broadcast preview failed", {

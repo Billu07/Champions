@@ -1,4 +1,4 @@
-import { extractMentionNames } from "@/lib/ai";
+import { extractMentionNamesWithMeta } from "@/lib/ai";
 import type { MentionMatch } from "@/lib/types";
 
 type EmployeeLike = {
@@ -91,20 +91,29 @@ export function resolveNames(
 export async function resolveMentions(
   message: string,
   employees: EmployeeLike[],
-): Promise<{ extractedNames: string[]; matches: MentionMatch[]; unresolved: string[] }> {
-  const extractedByModel = await extractMentionNames(message);
+): Promise<{
+  extractedNames: string[];
+  matches: MentionMatch[];
+  unresolved: string[];
+  aiMeta: {
+    usedFallback: boolean;
+    error: string | null;
+  };
+}> {
+  const extracted = await extractMentionNamesWithMeta(message);
 
   const explicitMentions = Array.from(
     message.matchAll(/@([a-zA-Z0-9 ._-]{2,60})/g),
     (match) => match[1].trim(),
   );
 
-  const extractedNames = Array.from(new Set([...explicitMentions, ...extractedByModel]));
+  const extractedNames = Array.from(new Set([...explicitMentions, ...extracted.names]));
   const resolved = resolveNames(extractedNames, employees);
 
   return {
     extractedNames,
     matches: resolved.matches,
     unresolved: resolved.unresolved,
+    aiMeta: extracted.meta,
   };
 }

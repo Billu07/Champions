@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { enhanceCeoMessage, extractInstructionRoutes } from "@/lib/ai";
+import { enhanceCeoMessageWithMeta, extractInstructionRoutesWithMeta } from "@/lib/ai";
+import type { AiInstructionRoute } from "@/lib/ai";
 import { resolveMentions, resolvePersonNameTarget } from "@/lib/mention";
 import type {
   BroadcastAudienceCategory,
@@ -44,6 +45,21 @@ export type BroadcastPreviewBuildResult = {
   unresolvedMentions: string[];
   unresolvedAiTargets: string[];
   enhancedMessage: string;
+  aiDiagnostics: {
+    routeExtraction: {
+      usedFallback: boolean;
+      error: string | null;
+      enabled: boolean;
+    };
+    mentionExtraction: {
+      usedFallback: boolean;
+      error: string | null;
+    };
+    messageRewrite: {
+      usedFallback: boolean;
+      error: string | null;
+    };
+  };
 };
 
 const CATEGORY_TO_TAG: Record<Exclude<BroadcastAudienceCategory, "all" | "custom">, string> = {
@@ -139,7 +155,13 @@ export async function buildBroadcastPreview(
 
   const baseRecipientIds = dedupeIds([...selectedIds, ...tagIds, ...categoryIds]);
 
-  const aiRoutes = input.useAiRouting ? await extractInstructionRoutes(input.message) : [];
+  const aiRouteResult = input.useAiRouting
+    ? await extractInstructionRoutesWithMeta(input.message)
+    : {
+        routes: [] as AiInstructionRoute[],
+        meta: { usedFallback: false, error: null },
+      };
+  const aiRoutes = aiRouteResult.routes;
   const previewRoutes: BroadcastPreviewRoute[] = [];
   const unresolvedAiTargets: string[] = [];
   const coveredByAi = new Set<string>();
@@ -223,7 +245,7 @@ export async function buildBroadcastPreview(
   }
 
   const recipients = dedupeIds(previewRoutes.flatMap((route) => route.recipientEmployeeIds));
-  const enhancedMessage = await enhanceCeoMessage(input.message);
+  const enhancedResult = await enhanceCeoMessageWithMeta(input.message);
 
   return {
     routes: previewRoutes,
@@ -232,7 +254,22 @@ export async function buildBroadcastPreview(
     mentionMatches: mentionResult.matches,
     unresolvedMentions: mentionResult.unresolved,
     unresolvedAiTargets: dedupeIds(unresolvedAiTargets),
-    enhancedMessage,
+    enhancedMessage: enhancedResult.text,
+    aiDiagnostics: {
+      routeExtraction: {
+        usedFallback: aiRouteResult.meta.usedFallback,
+        error: aiRouteResult.meta.error,
+        enabled: input.useAiRouting,
+      },
+      mentionExtraction: {
+        usedFallback: mentionResult.aiMeta.usedFallback,
+        error: mentionResult.aiMeta.error,
+      },
+      messageRewrite: {
+        usedFallback: enhancedResult.meta.usedFallback,
+        error: enhancedResult.meta.error,
+      },
+    },
   };
 }
 

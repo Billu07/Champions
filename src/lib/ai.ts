@@ -1,4 +1,5 @@
 import { env } from "@/lib/config";
+import { logError } from "@/lib/logger";
 
 type GeminiResponse = {
   candidates?: Array<{
@@ -19,6 +20,31 @@ export type AiInstructionRoute = {
   message: string;
   confidence: number;
 };
+
+type AiFallbackMeta = {
+  usedFallback: boolean;
+  error: string | null;
+};
+
+type AiTextResult = {
+  text: string;
+  meta: AiFallbackMeta;
+};
+
+type AiNamesResult = {
+  names: string[];
+  meta: AiFallbackMeta;
+};
+
+type AiRoutesResult = {
+  routes: AiInstructionRoute[];
+  meta: AiFallbackMeta;
+};
+
+function errorMessage(error: unknown): string {
+  const message = (error as Error)?.message ?? "Unknown AI error";
+  return message.trim() || "Unknown AI error";
+}
 
 async function runGemini(prompt: string, asJson = false): Promise<string> {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`;
@@ -57,6 +83,11 @@ async function runGemini(prompt: string, asJson = false): Promise<string> {
 }
 
 export async function enhanceCeoMessage(input: string): Promise<string> {
+  const result = await enhanceCeoMessageWithMeta(input);
+  return result.text;
+}
+
+export async function enhanceCeoMessageWithMeta(input: string): Promise<AiTextResult> {
   const prompt = [
     "Rewrite this internal CEO broadcast in very simple, natural Bengali.",
     "Style rules:",
@@ -74,13 +105,31 @@ export async function enhanceCeoMessage(input: string): Promise<string> {
 
   try {
     const output = await runGemini(prompt, false);
-    return output || input.trim();
-  } catch {
-    return input.trim();
+    const text = output || input.trim();
+    const meta: AiFallbackMeta = {
+      usedFallback: !output,
+      error: output ? null : "Gemini returned an empty response",
+    };
+    if (meta.usedFallback) {
+      logError("AI enhancement fallback", { reason: meta.error });
+    }
+    return { text, meta };
+  } catch (error) {
+    const reason = errorMessage(error);
+    logError("AI enhancement fallback", { reason });
+    return {
+      text: input.trim(),
+      meta: { usedFallback: true, error: reason },
+    };
   }
 }
 
 export async function extractMentionNames(message: string): Promise<string[]> {
+  const result = await extractMentionNamesWithMeta(message);
+  return result.names;
+}
+
+export async function extractMentionNamesWithMeta(message: string): Promise<AiNamesResult> {
   const prompt = [
     "Extract person names mentioned in this WhatsApp message.",
     "Return strict JSON: {\"names\":[\"name 1\",\"name 2\"]}",
@@ -92,9 +141,17 @@ export async function extractMentionNames(message: string): Promise<string[]> {
   try {
     const output = await runGemini(prompt, true);
     const parsed = JSON.parse(output) as { names?: string[] };
-    return (parsed.names ?? []).map((name) => name.trim()).filter(Boolean);
-  } catch {
-    return [];
+    return {
+      names: (parsed.names ?? []).map((name) => name.trim()).filter(Boolean),
+      meta: { usedFallback: false, error: null },
+    };
+  } catch (error) {
+    const reason = errorMessage(error);
+    logError("AI mention extraction fallback", { reason });
+    return {
+      names: [],
+      meta: { usedFallback: true, error: reason },
+    };
   }
 }
 
@@ -146,6 +203,11 @@ function heuristicInstructionRoutes(message: string): AiInstructionRoute[] {
 }
 
 export async function extractInstructionRoutes(message: string): Promise<AiInstructionRoute[]> {
+  const result = await extractInstructionRoutesWithMeta(message);
+  return result.routes;
+}
+
+export async function extractInstructionRoutesWithMeta(message: string): Promise<AiRoutesResult> {
   const prompt = [
     "You are parsing a CEO WhatsApp instruction.",
     "Extract one or more targeted routes from the message.",
@@ -179,9 +241,26 @@ export async function extractInstructionRoutes(message: string): Promise<AiInstr
       })
       .filter((route) => route.target && route.message);
 
-    return cleaned.length > 0 ? cleaned : heuristicInstructionRoutes(message);
-  } catch {
-    return heuristicInstructionRoutes(message);
+    if (cleaned.length > 0) {
+      return {
+        routes: cleaned,
+        meta: { usedFallback: false, error: null },
+      };
+    }
+
+    const fallbackReason = "Gemini returned no valid routes";
+    logError("AI route extraction fallback", { reason: fallbackReason });
+    return {
+      routes: heuristicInstructionRoutes(message),
+      meta: { usedFallback: true, error: fallbackReason },
+    };
+  } catch (error) {
+    const reason = errorMessage(error);
+    logError("AI route extraction fallback", { reason });
+    return {
+      routes: heuristicInstructionRoutes(message),
+      meta: { usedFallback: true, error: reason },
+    };
   }
 }
 

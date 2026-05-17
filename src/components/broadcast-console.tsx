@@ -19,6 +19,21 @@ type PreviewResponse = {
   unresolvedMentions: string[];
   unresolvedAiTargets: string[];
   enhancedMessage: string;
+  aiDiagnostics?: {
+    routeExtraction: {
+      usedFallback: boolean;
+      error: string | null;
+      enabled: boolean;
+    };
+    mentionExtraction: {
+      usedFallback: boolean;
+      error: string | null;
+    };
+    messageRewrite: {
+      usedFallback: boolean;
+      error: string | null;
+    };
+  };
 };
 
 type BroadcastSendFailure = {
@@ -61,6 +76,29 @@ function dedupe(values: string[]): string[] {
   return Array.from(new Set(values));
 }
 
+function previewWarnings(preview: PreviewResponse | null): string[] {
+  if (!preview?.aiDiagnostics) return [];
+
+  const warnings: string[] = [];
+  const route = preview.aiDiagnostics.routeExtraction;
+  const mention = preview.aiDiagnostics.mentionExtraction;
+  const rewrite = preview.aiDiagnostics.messageRewrite;
+
+  if (route.enabled && route.usedFallback) {
+    warnings.push(`Route AI fallback: ${route.error || "AI route extraction unavailable"}`);
+  }
+
+  if (mention.usedFallback) {
+    warnings.push(`Mention AI fallback: ${mention.error || "AI mention extraction unavailable"}`);
+  }
+
+  if (rewrite.usedFallback) {
+    warnings.push(`Rewrite AI fallback: ${rewrite.error || "AI rewrite unavailable"}`);
+  }
+
+  return warnings;
+}
+
 export function BroadcastConsole({ initialEmployees, templateName }: BroadcastConsoleProps) {
   const [message, setMessage] = useState("");
   const [targetMode, setTargetMode] = useState<TargetMode>("mixed");
@@ -98,6 +136,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
 
   const previewRecipientCount = preview?.recipients.length ?? 0;
   const previewRouteCount = preview?.routes.length ?? 0;
+  const aiWarnings = previewWarnings(preview);
 
   useEffect(() => {
     if (!previewModalOpen) return;
@@ -201,8 +240,14 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       setReviewedMessage((parsed.enhancedMessage || trimmedMessage).trim());
       setPreviewGeneratedAt(new Date().toLocaleString());
       setPreviewModalOpen(true);
-      setStatus(`Preview ready: ${parsed.recipients.length} recipient(s), ${parsed.routes.length} route(s).`);
-      pushToast("success", "Preview ready", `AI preview generated for ${parsed.recipients.length} recipients.`);
+      const warnings = previewWarnings(parsed);
+      if (warnings.length > 0) {
+        setStatus(`Preview ready with AI fallback: ${warnings[0]}`);
+        pushToast("info", "Preview ready with fallback", warnings[0]);
+      } else {
+        setStatus(`Preview ready: ${parsed.recipients.length} recipient(s), ${parsed.routes.length} route(s).`);
+        pushToast("success", "Preview ready", `AI preview generated for ${parsed.recipients.length} recipients.`);
+      }
     } catch {
       setStatus("Preview request failed. Please retry.");
       pushToast("error", "Network error", "Preview request failed. Please retry.");
@@ -530,6 +575,9 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
             ) : null}
             {preview.unresolvedAiTargets.length ? (
               <p className="muted">Unresolved AI targets: {preview.unresolvedAiTargets.join(", ")}</p>
+            ) : null}
+            {aiWarnings.length ? (
+              <p className="muted">AI diagnostics: {aiWarnings.join(" | ")}</p>
             ) : null}
 
             <div className="inline" style={{ justifyContent: "space-between" }}>
