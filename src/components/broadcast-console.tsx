@@ -33,13 +33,13 @@ type BroadcastConsoleProps = {
   templateName: string;
 };
 
-const audienceOptions: Array<{ value: BroadcastAudienceCategory; label: string; hint: string }> = [
-  { value: "sales_team", label: "Sales Team", hint: "All active members tagged Sales Field" },
-  { value: "head_office", label: "HO Team", hint: "All active members tagged Head Office" },
-  { value: "drivers", label: "Drivers", hint: "All active members tagged Drivers" },
-  { value: "customers", label: "Customers", hint: "All active members tagged Customers" },
-  { value: "all", label: "All", hint: "Everyone active in roster" },
-  { value: "custom", label: "Custom", hint: "Manual/tag/mention based targeting" },
+const audienceOptions: Array<{ value: BroadcastAudienceCategory; label: string }> = [
+  { value: "sales_team", label: "Sales Team" },
+  { value: "head_office", label: "Head Office" },
+  { value: "drivers", label: "Drivers" },
+  { value: "customers", label: "Customers" },
+  { value: "all", label: "All Members" },
+  { value: "custom", label: "Custom" },
 ];
 
 function tagLabelFromCategory(category: BroadcastAudienceCategory): string {
@@ -48,6 +48,10 @@ function tagLabelFromCategory(category: BroadcastAudienceCategory): string {
   if (category === "drivers") return "drivers";
   if (category === "customers") return "customers";
   return "";
+}
+
+function parseMultiSelectValues(select: HTMLSelectElement): string[] {
+  return Array.from(select.selectedOptions).map((option) => option.value);
 }
 
 export function BroadcastConsole({ initialEmployees, initialTags, templateName }: BroadcastConsoleProps) {
@@ -94,13 +98,15 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
     return ids.size;
   }, [preview, enabledRouteIds]);
 
-  const selectedRecipientsCount = useMemo(() => {
-    return new Set(selectedEmployeeIds).size;
-  }, [selectedEmployeeIds]);
+  function toggleEmployee(id: string, checked: boolean): void {
+    setSelectedEmployeeIds((prev) =>
+      checked ? Array.from(new Set([...prev, id])) : prev.filter((item) => item !== id),
+    );
+  }
 
   async function onPreview(event: FormEvent) {
     event.preventDefault();
-    setStatus("Generating preview...");
+    setStatus("Generating broadcast preview...");
 
     const categoryTag = tagLabelFromCategory(audienceCategory);
     const effectiveTags = categoryTag && !selectedTagKeys.includes(categoryTag)
@@ -120,7 +126,6 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
     });
 
     const json = await res.json().catch(() => ({}));
-
     if (!res.ok) {
       setStatus((json as { error?: string }).error ?? "Preview failed");
       return;
@@ -130,11 +135,9 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
     setPreview(parsed);
     setPreviewGeneratedAt(new Date().toLocaleString());
     setEnhancedMessageDraft(parsed.enhancedMessage);
-    setRouteMessageDrafts(
-      Object.fromEntries(parsed.routes.map((route) => [route.routeId, route.instruction])),
-    );
+    setRouteMessageDrafts(Object.fromEntries(parsed.routes.map((route) => [route.routeId, route.instruction])));
     setEnabledRouteIds(parsed.routes.map((route) => route.routeId));
-    setStatus(`Preview ready: ${parsed.routes.length} routes, ${parsed.recipients.length} recipients.`);
+    setStatus(`Preview ready: ${parsed.routes.length} route(s), ${parsed.recipients.length} recipient(s).`);
 
     setTimeout(() => {
       reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -144,6 +147,7 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
   async function onSend() {
     if (!preview) return;
     setSending(true);
+
     try {
       const reviewedRoutes = preview.routes
         .filter((route) => enabledRouteIds.includes(route.routeId))
@@ -156,19 +160,17 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
             targetLabel: route.targetLabel,
             source: route.source,
             recipientEmployeeIds: route.recipientEmployeeIds,
-            message:
-              draft ||
-              (useEnhancedForFallback && fallbackEnhance ? enhancedMessageDraft : message),
+            message: draft || (useEnhancedForFallback && fallbackEnhance ? enhancedMessageDraft : message),
           };
         })
         .filter((route) => route.recipientEmployeeIds.length > 0 && route.message.length > 0);
 
       if (reviewedRoutes.length === 0) {
-        setStatus("No valid reviewed routes selected for sending.");
+        setStatus("No valid route selected for sending.");
         return;
       }
 
-      setStatus("Sending template broadcast...");
+      setStatus("Sending broadcast...");
 
       const res = await fetch("/api/broadcasts/send", {
         method: "POST",
@@ -182,7 +184,6 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
       });
 
       const json = await res.json().catch(() => ({}));
-
       if (!res.ok) {
         setStatus((json as { error?: string }).error ?? "Broadcast failed");
         return;
@@ -191,7 +192,7 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
       const accepted = Number((json as { accepted?: number; sent?: number }).accepted ?? (json as { sent?: number }).sent ?? 0);
       const failed = Number((json as { failed?: number }).failed ?? 0);
       setStatus(
-        `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}. Final delivery updates from webhook status.`,
+        `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}.`,
       );
     } finally {
       setSending(false);
@@ -199,208 +200,222 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
   }
 
   return (
-    <section className="grid" style={{ gap: 16 }}>
-      <div className="kpi-grid">
-        <article className="card kpi-card">
-          <p className="kpi-label">Active Members</p>
-          <p className="kpi-value">{employees.length}</p>
-        </article>
-        <article className="card kpi-card">
-          <p className="kpi-label">Manual Selected</p>
-          <p className="kpi-value">{selectedRecipientsCount}</p>
-        </article>
-        <article className="card kpi-card">
-          <p className="kpi-label">Tags Selected</p>
-          <p className="kpi-value">{selectedTagKeys.length}</p>
-        </article>
-        <article className="card kpi-card">
-          <p className="kpi-label">Preview Routes</p>
-          <p className="kpi-value">{preview?.routes.length ?? 0}</p>
-          <p className="kpi-sub">Recipients reach: {routeRecipientCount}</p>
-        </article>
-      </div>
-
-      <form className="card grid" onSubmit={onPreview} style={{ gap: 12 }}>
-        <h2>CEO Broadcast Composer</h2>
-        <p>
-          Write one instruction. AI will split by recipient and produce Bengali enhancement for your final review.
-        </p>
-
-        <div className="row">
-          <label className="col-4 grid" style={{ gap: 6 }}>
-            <span>Audience Category</span>
-            <select
-              value={audienceCategory}
-              onChange={(event) => setAudienceCategory(event.target.value as BroadcastAudienceCategory)}
-            >
-              {audienceOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label} - {option.hint}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="col-8 inline" style={{ alignItems: "flex-end" }}>
-            <label className="inline">
-              <input
-                type="checkbox"
-                checked={useAiRouting}
-                onChange={(event) => setUseAiRouting(event.target.checked)}
-              />
-              AI route extraction
-            </label>
-            <label className="inline">
-              <input
-                type="checkbox"
-                checked={useEnhancedForFallback}
-                onChange={(event) => setUseEnhancedForFallback(event.target.checked)}
-              />
-              Use Bengali enhancement for fallback route text
-            </label>
-          </div>
+    <section className="grid" style={{ gap: 14 }}>
+      <article className="card grid" style={{ gap: 12 }}>
+        <div className="inline" style={{ justifyContent: "space-between" }}>
+          <h2>CEO Broadcast Zone</h2>
+          <span className="pill">Template: {templateName}</span>
         </div>
 
-        <label className="grid" style={{ gap: 6 }}>
-          <span>Original CEO Message</span>
-          <textarea value={message} onChange={(event) => setMessage(event.target.value)} required />
-        </label>
+        <form className="grid" onSubmit={onPreview} style={{ gap: 12 }}>
+          <div className="grid" style={{ gap: 8 }}>
+            <span className="muted" style={{ fontWeight: 600 }}>Audience</span>
+            <div className="inline">
+              {audienceOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={audienceCategory === option.value ? "" : "ghost"}
+                  onClick={() => setAudienceCategory(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
-        <details className="panel">
-          <summary>Optional Recipient Filters</summary>
-          <div className="grid" style={{ gap: 10, marginTop: 10 }}>
-            <div className="grid" style={{ gap: 8 }}>
-              <strong>Tags</strong>
-              <div className="inline">
-                {tags.map((tag) => (
-                  <label key={tag.key} className="pill inline">
-                    <input
-                      type="checkbox"
-                      checked={selectedTagKeys.includes(tag.key)}
-                      onChange={(event) => {
-                        setSelectedTagKeys((prev) =>
-                          event.target.checked
-                            ? Array.from(new Set([...prev, tag.key]))
-                            : prev.filter((key) => key !== tag.key),
-                        );
-                      }}
-                    />
-                    {tag.label}
-                  </label>
-                ))}
+          <div className="row">
+            <label className="col-6 grid" style={{ gap: 6 }}>
+              <span>Message</span>
+              <textarea
+                value={message}
+                onChange={(event) => setMessage(event.target.value)}
+                placeholder="Write the CEO broadcast message..."
+                style={{ minHeight: 130 }}
+                required
+              />
+            </label>
+
+            <div className="col-6 grid" style={{ gap: 10 }}>
+              <label className="inline">
+                <input
+                  type="checkbox"
+                  checked={useAiRouting}
+                  onChange={(event) => setUseAiRouting(event.target.checked)}
+                />
+                AI route extraction
+              </label>
+              <label className="inline">
+                <input
+                  type="checkbox"
+                  checked={useEnhancedForFallback}
+                  onChange={(event) => setUseEnhancedForFallback(event.target.checked)}
+                />
+                Use enhanced text as fallback
+              </label>
+              <div className="kpi-grid">
+                <article className="panel">
+                  <p className="kpi-label">Selected Members</p>
+                  <p className="kpi-value" style={{ fontSize: 22 }}>{selectedEmployeeIds.length}</p>
+                </article>
+                <article className="panel">
+                  <p className="kpi-label">Selected Tags</p>
+                  <p className="kpi-value" style={{ fontSize: 22 }}>{selectedTagKeys.length}</p>
+                </article>
+                <article className="panel">
+                  <p className="kpi-label">Preview Reach</p>
+                  <p className="kpi-value" style={{ fontSize: 22 }}>{routeRecipientCount}</p>
+                </article>
               </div>
             </div>
+          </div>
 
-            <div className="grid" style={{ gap: 8 }}>
-              <strong>Manual Members</strong>
-              <input
-                className="input"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search members"
-              />
-              <div className="inline">
-                <button
-                  className="ghost"
-                  type="button"
-                  onClick={() => setSelectedEmployeeIds(filteredEmployees.map((employee) => employee.id))}
+          <article className="panel grid" style={{ gap: 10 }}>
+            <div className="inline" style={{ justifyContent: "space-between" }}>
+              <strong>Recipient Selection</strong>
+              <span className="muted">Industry-style multi-select controls</span>
+            </div>
+
+            <div className="row">
+              <label className="col-4 grid" style={{ gap: 6 }}>
+                <span>Category Tags (multi-select)</span>
+                <select
+                  multiple
+                  size={Math.max(4, Math.min(7, tags.length))}
+                  value={selectedTagKeys}
+                  onChange={(event) => setSelectedTagKeys(parseMultiSelectValues(event.currentTarget))}
                 >
-                  Select Filtered
-                </button>
-                <button className="ghost" type="button" onClick={() => setSelectedEmployeeIds([])}>
-                  Clear
-                </button>
-                <span className="muted">Selected: {selectedEmployeeIds.length}</span>
-              </div>
-              <div className="panel" style={{ maxHeight: 180, overflowY: "auto" }}>
-                <div className="inline">
-                  {filteredEmployees.slice(0, 120).map((employee) => (
-                    <label key={employee.id} className="pill inline">
-                      <input
-                        type="checkbox"
-                        checked={selectedEmployeeIds.includes(employee.id)}
-                        onChange={(event) => {
-                          setSelectedEmployeeIds((prev) =>
-                            event.target.checked
-                              ? Array.from(new Set([...prev, employee.id]))
-                              : prev.filter((id) => id !== employee.id),
-                          );
-                        }}
-                      />
-                      {employee.full_name}
-                    </label>
+                  {tags.map((tag) => (
+                    <option key={tag.key} value={tag.key}>
+                      {tag.label}
+                    </option>
                   ))}
+                </select>
+                <div className="inline">
+                  <button
+                    className="ghost"
+                    type="button"
+                    onClick={() => setSelectedTagKeys(tags.map((tag) => tag.key))}
+                  >
+                    Select All Tags
+                  </button>
+                  <button className="ghost" type="button" onClick={() => setSelectedTagKeys([])}>
+                    Clear Tags
+                  </button>
+                </div>
+              </label>
+
+              <div className="col-8 grid" style={{ gap: 6 }}>
+                <span>Members</span>
+                <div className="inline">
+                  <input
+                    className="input"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Search name, number, department, designation"
+                  />
+                </div>
+                <div className="inline">
+                  <button className="ghost" type="button" onClick={() => setSelectedEmployeeIds(employees.map((item) => item.id))}>
+                    Select All
+                  </button>
+                  <button
+                    className="ghost"
+                    type="button"
+                    onClick={() => setSelectedEmployeeIds(filteredEmployees.map((item) => item.id))}
+                  >
+                    Select Filtered
+                  </button>
+                  <button className="ghost" type="button" onClick={() => setSelectedEmployeeIds([])}>
+                    Clear Selection
+                  </button>
+                  <span className="muted">Showing {filteredEmployees.length}</span>
+                </div>
+                <div className="table-wrap" style={{ maxHeight: 280, overflowY: "auto" }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th style={{ width: 70 }}>Pick</th>
+                        <th>Name</th>
+                        <th>Department</th>
+                        <th>Designation</th>
+                        <th>WhatsApp</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredEmployees.map((employee) => (
+                        <tr key={employee.id}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={selectedEmployeeIds.includes(employee.id)}
+                              onChange={(event) => toggleEmployee(employee.id, event.target.checked)}
+                            />
+                          </td>
+                          <td>{employee.full_name}</td>
+                          <td>{employee.department || "-"}</td>
+                          <td>{employee.designation || "-"}</td>
+                          <td>{employee.whatsapp_e164}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
-          </div>
-        </details>
+          </article>
 
-        <div className="inline" style={{ justifyContent: "space-between" }}>
-          <button type="submit">Preview Broadcast Plan</button>
-          <span className="muted">{status}</span>
-        </div>
-      </form>
+          <div className="inline" style={{ justifyContent: "space-between" }}>
+            <button type="submit">Generate Preview</button>
+            <span className="muted">{status}</span>
+          </div>
+        </form>
+      </article>
 
       {preview ? (
         <article className="card grid" style={{ gap: 12 }} ref={reviewRef}>
           <div className="inline" style={{ justifyContent: "space-between" }}>
-            <h2>Enhanced Message + Recipients</h2>
-            <p>
-              Enabled routes: {enabledRouteIds.length} | Recipient reach: {routeRecipientCount}
-              {previewGeneratedAt ? ` | Previewed: ${previewGeneratedAt}` : ""}
-            </p>
+            <h2>Broadcast Review</h2>
+            <span className="muted">
+              Routes: {preview.routes.length} | Reach: {routeRecipientCount}
+              {previewGeneratedAt ? ` | ${previewGeneratedAt}` : ""}
+            </span>
           </div>
 
           <div className="row">
-            <div className="col-8 grid" style={{ gap: 6 }}>
-              <strong>Enhanced Bengali Message (Editable)</strong>
+            <label className="col-8 grid" style={{ gap: 6 }}>
+              <span>Enhanced Message</span>
               <textarea
                 value={enhancedMessageDraft}
                 onChange={(event) => setEnhancedMessageDraft(event.target.value)}
                 style={{ minHeight: 180 }}
               />
-            </div>
+            </label>
+
             <div className="col-4 grid" style={{ gap: 8 }}>
               <strong>Resolved Recipients ({preview.recipients.length})</strong>
               <div className="panel" style={{ maxHeight: 180, overflowY: "auto" }}>
                 <div className="inline">
-                  {preview.recipients.map((item) => (
-                    <span className="pill" key={item.id}>{item.full_name}</span>
+                  {preview.recipients.map((recipient) => (
+                    <span className="pill" key={recipient.id}>{recipient.full_name}</span>
                   ))}
-                </div>
-              </div>
-
-              <strong>Mention Matches</strong>
-              <div className="panel" style={{ maxHeight: 120, overflowY: "auto" }}>
-                <div className="inline">
-                  {preview.mentionMatches.length
-                    ? preview.mentionMatches.map((match) => (
-                      <span className="pill" key={`${match.employeeId}-${match.fullName}`}>{match.fullName}</span>
-                    ))
-                    : <span className="muted">No explicit mention match.</span>}
                 </div>
               </div>
             </div>
           </div>
 
           {preview.unresolvedMentions.length ? (
-            <div className="panel">
-              <strong>Unresolved Mentions:</strong> {preview.unresolvedMentions.join(", ")}
-            </div>
+            <p className="muted">Unresolved mentions: {preview.unresolvedMentions.join(", ")}</p>
           ) : null}
-
           {preview.unresolvedAiTargets.length ? (
-            <div className="panel">
-              <strong>Unresolved AI Targets:</strong> {preview.unresolvedAiTargets.join(", ")}
-            </div>
+            <p className="muted">Unresolved AI targets: {preview.unresolvedAiTargets.join(", ")}</p>
           ) : null}
 
           <div className="grid" style={{ gap: 10 }}>
             {preview.routes.map((route) => (
-              <div className="panel" key={route.routeId}>
+              <article className="card" key={route.routeId}>
                 <div className="inline" style={{ justifyContent: "space-between" }}>
-                  <label className="inline" style={{ fontWeight: 600 }}>
+                  <label className="inline" style={{ fontWeight: 700 }}>
                     <input
                       type="checkbox"
                       checked={enabledRouteIds.includes(route.routeId)}
@@ -414,18 +429,13 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
                     />
                     {route.targetLabel}
                   </label>
-                  <span className="pill">
-                    {route.source} | {Math.round(route.confidence * 100)}%
-                  </span>
+                  <span className="pill">{route.source} | {Math.round(route.confidence * 100)}%</span>
                 </div>
 
                 <p className="muted">
                   Recipients: {route.recipientEmployeeIds.length}
                   {route.recipientEmployeeIds.length
-                    ? ` (${route.recipientEmployeeIds
-                        .slice(0, 6)
-                        .map((id) => employeesById.get(id)?.full_name || id)
-                        .join(", ")}${route.recipientEmployeeIds.length > 6 ? ", ..." : ""})`
+                    ? ` (${route.recipientEmployeeIds.slice(0, 6).map((id) => employeesById.get(id)?.full_name || id).join(", ")}${route.recipientEmployeeIds.length > 6 ? ", ..." : ""})`
                     : ""}
                 </p>
 
@@ -439,12 +449,12 @@ export function BroadcastConsole({ initialEmployees, initialTags, templateName }
                   }
                   style={{ minHeight: 90 }}
                 />
-              </div>
+              </article>
             ))}
           </div>
 
           <div className="inline">
-            <button onClick={onSend} disabled={sending}>
+            <button type="button" onClick={() => void onSend()} disabled={sending}>
               {sending ? "Sending..." : "Send Broadcast"}
             </button>
             <span className="muted">Template: {templateName}</span>

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useMemo, useRef, useState } from "react";
 
 type Tag = {
   id?: string;
@@ -47,6 +47,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
   const [tags, setTags] = useState<Tag[]>(initialTags);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [form, setForm] = useState(defaultForm);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [filterTag, setFilterTag] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("all");
   const [filterTracking, setFilterTracking] = useState<"all" | "tracked" | "untracked">("all");
@@ -56,8 +57,23 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
   const [loading, setLoading] = useState(false);
   const [newTagKey, setNewTagKey] = useState("");
   const [newTagLabel, setNewTagLabel] = useState("");
+  const editorRef = useRef<HTMLFormElement | null>(null);
 
   const editing = Boolean(form.id);
+
+  function parseTagSelection(select: HTMLSelectElement): string[] {
+    return Array.from(select.selectedOptions).map((item) => item.value);
+  }
+
+  function openEditor(mode: "create" | "edit"): void {
+    setEditorOpen(true);
+    if (mode === "create") {
+      resetForm(false);
+    }
+    setTimeout(() => {
+      editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+  }
 
   async function load() {
     setLoading(true);
@@ -84,9 +100,12 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
     setLoading(false);
   }
 
-  function resetForm() {
+  function resetForm(closeEditor = true) {
     setForm(defaultForm);
     setSelectedTags([]);
+    if (closeEditor) {
+      setEditorOpen(false);
+    }
   }
 
   function beginEdit(employee: Employee) {
@@ -105,6 +124,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
     });
     setSelectedTags(employee.tags.map((tag) => tag.key));
     setMessage(`Editing ${employee.full_name}`);
+    openEditor("edit");
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -137,16 +157,15 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
     });
 
     const json = await res.json().catch(() => ({}));
-
     if (!res.ok) {
       setMessage((json as { error?: string }).error ?? "Failed to save employee");
       setSaving(false);
       return;
     }
 
-    setMessage(editing ? "Employee updated." : "Employee created.");
-    resetForm();
+    setMessage(editing ? "Member updated successfully." : "Member created successfully.");
     await load();
+    resetForm();
     setSaving(false);
   }
 
@@ -154,10 +173,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
     const confirmed = window.confirm(`Delete ${employee.full_name}? This cannot be undone.`);
     if (!confirmed) return;
 
-    const res = await fetch(`/api/employees?id=${employee.id}`, {
-      method: "DELETE",
-    });
-
+    const res = await fetch(`/api/employees?id=${employee.id}`, { method: "DELETE" });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
       setMessage((json as { error?: string }).error ?? "Failed to delete employee");
@@ -205,9 +221,8 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
       if (filterTracking === "tracked" && !employee.tracking_enabled) return false;
       if (filterTracking === "untracked" && employee.tracking_enabled) return false;
 
-      if (filterTag !== "all") {
-        const hasTag = employee.tags.some((tag) => tag.key === filterTag);
-        if (!hasTag) return false;
+      if (filterTag !== "all" && !employee.tags.some((tag) => tag.key === filterTag)) {
+        return false;
       }
 
       if (!q) return true;
@@ -228,9 +243,9 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
   }, [employees, filterStatus, filterTag, filterTracking, search]);
 
   const stats = useMemo(() => {
-    const active = employees.filter((item) => item.is_active).length;
-    const tracked = employees.filter((item) => item.is_active && item.tracking_enabled).length;
-    const drivers = employees.filter((item) => item.tags.some((tag) => tag.key === "drivers") && item.is_active).length;
+    const active = employees.filter((employee) => employee.is_active).length;
+    const tracked = employees.filter((employee) => employee.is_active && employee.tracking_enabled).length;
+    const drivers = employees.filter((employee) => employee.tags.some((tag) => tag.key === "drivers") && employee.is_active).length;
 
     return {
       total: employees.length,
@@ -261,139 +276,153 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
         </article>
       </div>
 
-      <form className="card grid" onSubmit={onSubmit} style={{ gap: 12 }}>
+      <article className="card grid" style={{ gap: 10 }}>
         <div className="inline" style={{ justifyContent: "space-between" }}>
-          <h2>{editing ? "Edit Member" : "Add Member"}</h2>
-          {editing ? (
-            <button className="ghost" type="button" onClick={resetForm}>
-              Cancel Edit
-            </button>
-          ) : null}
-        </div>
-
-        <div className="row">
-          <label className="col-6 grid" style={{ gap: 6 }}>
-            <span>Full Name</span>
-            <input
-              className="input"
-              value={form.fullName}
-              onChange={(event) => setForm((prev) => ({ ...prev, fullName: event.target.value }))}
-              required
-            />
-          </label>
-
-          <label className="col-6 grid" style={{ gap: 6 }}>
-            <span>WhatsApp Number</span>
-            <input
-              className="input"
-              value={form.whatsappNumber}
-              onChange={(event) => setForm((prev) => ({ ...prev, whatsappNumber: event.target.value }))}
-              required
-            />
-          </label>
-
-          <label className="col-4 grid" style={{ gap: 6 }}>
-            <span>Designation</span>
-            <input
-              className="input"
-              value={form.designation}
-              onChange={(event) => setForm((prev) => ({ ...prev, designation: event.target.value }))}
-            />
-          </label>
-
-          <label className="col-4 grid" style={{ gap: 6 }}>
-            <span>Department</span>
-            <input
-              className="input"
-              value={form.department}
-              onChange={(event) => setForm((prev) => ({ ...prev, department: event.target.value }))}
-            />
-          </label>
-
-          <label className="col-4 grid" style={{ gap: 6 }}>
-            <span>Branch</span>
-            <input
-              className="input"
-              value={form.branch}
-              onChange={(event) => setForm((prev) => ({ ...prev, branch: event.target.value }))}
-            />
-          </label>
-
-          <label className="col-6 grid" style={{ gap: 6 }}>
-            <span>Aliases (comma separated)</span>
-            <input
-              className="input"
-              value={form.aliases}
-              onChange={(event) => setForm((prev) => ({ ...prev, aliases: event.target.value }))}
-            />
-          </label>
-
-          <label className="col-6 grid" style={{ gap: 6 }}>
-            <span>Status</span>
-            <input
-              className="input"
-              value={form.status}
-              onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))}
-            />
-          </label>
-
-          <label className="col-12 grid" style={{ gap: 6 }}>
-            <span>Notes</span>
-            <textarea
-              value={form.notes}
-              onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
-            />
-          </label>
-        </div>
-
-        <div className="inline">
-          <label className="inline">
-            <input
-              type="checkbox"
-              checked={form.trackingEnabled}
-              onChange={(event) => setForm((prev) => ({ ...prev, trackingEnabled: event.target.checked }))}
-            />
-            Tracking Enabled
-          </label>
-          <label className="inline">
-            <input
-              type="checkbox"
-              checked={form.isActive}
-              onChange={(event) => setForm((prev) => ({ ...prev, isActive: event.target.checked }))}
-            />
-            Active
-          </label>
-        </div>
-
-        <div className="grid" style={{ gap: 8 }}>
-          <strong>Tags</strong>
+          <h2>Member Actions</h2>
           <div className="inline">
-            {tags.map((tag) => (
-              <label key={tag.key} className="inline pill">
-                <input
-                  type="checkbox"
-                  checked={selectedTags.includes(tag.key)}
-                  onChange={(event) => {
-                    setSelectedTags((prev) =>
-                      event.target.checked
-                        ? Array.from(new Set([...prev, tag.key]))
-                        : prev.filter((item) => item !== tag.key),
-                    );
-                  }}
-                />
-                {tag.label}
-              </label>
-            ))}
+            <button type="button" onClick={() => openEditor("create")}>
+              Add Member
+            </button>
+            <button className="ghost" type="button" onClick={() => void load()} disabled={loading}>
+              {loading ? "Refreshing..." : "Refresh"}
+            </button>
           </div>
         </div>
 
-        <div className="inline">
-          <button disabled={saving} type="submit">
-            {saving ? "Saving..." : editing ? "Update Member" : "Create Member"}
-          </button>
-          {message ? <span className="muted">{message}</span> : null}
-        </div>
-      </form>
+        {message ? <p className="muted">{message}</p> : null}
+      </article>
+
+      {editorOpen ? (
+        <form className="card grid" onSubmit={onSubmit} style={{ gap: 12 }} ref={editorRef}>
+          <div className="inline" style={{ justifyContent: "space-between" }}>
+            <h2>{editing ? `Edit Member: ${form.fullName}` : "Add Member"}</h2>
+            <button className="ghost" type="button" onClick={() => resetForm()}>
+              Close
+            </button>
+          </div>
+
+          <div className="row">
+            <label className="col-6 grid" style={{ gap: 6 }}>
+              <span>Full Name</span>
+              <input
+                className="input"
+                value={form.fullName}
+                onChange={(event) => setForm((prev) => ({ ...prev, fullName: event.target.value }))}
+                required
+              />
+            </label>
+
+            <label className="col-6 grid" style={{ gap: 6 }}>
+              <span>WhatsApp Number</span>
+              <input
+                className="input"
+                value={form.whatsappNumber}
+                onChange={(event) => setForm((prev) => ({ ...prev, whatsappNumber: event.target.value }))}
+                required
+              />
+            </label>
+
+            <label className="col-4 grid" style={{ gap: 6 }}>
+              <span>Designation</span>
+              <input
+                className="input"
+                value={form.designation}
+                onChange={(event) => setForm((prev) => ({ ...prev, designation: event.target.value }))}
+              />
+            </label>
+
+            <label className="col-4 grid" style={{ gap: 6 }}>
+              <span>Department</span>
+              <input
+                className="input"
+                value={form.department}
+                onChange={(event) => setForm((prev) => ({ ...prev, department: event.target.value }))}
+              />
+            </label>
+
+            <label className="col-4 grid" style={{ gap: 6 }}>
+              <span>Branch</span>
+              <input
+                className="input"
+                value={form.branch}
+                onChange={(event) => setForm((prev) => ({ ...prev, branch: event.target.value }))}
+              />
+            </label>
+
+            <label className="col-6 grid" style={{ gap: 6 }}>
+              <span>Aliases (comma separated)</span>
+              <input
+                className="input"
+                value={form.aliases}
+                onChange={(event) => setForm((prev) => ({ ...prev, aliases: event.target.value }))}
+              />
+            </label>
+
+            <label className="col-6 grid" style={{ gap: 6 }}>
+              <span>Status</span>
+              <input
+                className="input"
+                value={form.status}
+                onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))}
+              />
+            </label>
+
+            <label className="col-12 grid" style={{ gap: 6 }}>
+              <span>Notes</span>
+              <textarea
+                value={form.notes}
+                onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
+              />
+            </label>
+          </div>
+
+          <div className="inline">
+            <label className="inline">
+              <input
+                type="checkbox"
+                checked={form.trackingEnabled}
+                onChange={(event) => setForm((prev) => ({ ...prev, trackingEnabled: event.target.checked }))}
+              />
+              Tracking Enabled
+            </label>
+            <label className="inline">
+              <input
+                type="checkbox"
+                checked={form.isActive}
+                onChange={(event) => setForm((prev) => ({ ...prev, isActive: event.target.checked }))}
+              />
+              Active
+            </label>
+          </div>
+
+          <label className="grid" style={{ gap: 6 }}>
+            <span>Tags (multi-select)</span>
+            <select
+              multiple
+              size={Math.max(4, Math.min(7, tags.length))}
+              value={selectedTags}
+              onChange={(event) => setSelectedTags(parseTagSelection(event.currentTarget))}
+            >
+              {tags.map((tag) => (
+                <option key={tag.key} value={tag.key}>
+                  {tag.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="inline">
+            <button disabled={saving} type="submit">
+              {saving ? "Saving..." : editing ? "Update Member" : "Create Member"}
+            </button>
+            {editing ? (
+              <button className="ghost" type="button" onClick={() => resetForm()}>
+                Cancel Edit
+              </button>
+            ) : null}
+          </div>
+        </form>
+      ) : null}
 
       <article className="card grid" style={{ gap: 10 }}>
         <h2>Create Tag</h2>
@@ -427,12 +456,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
       <article className="card grid" style={{ gap: 10 }}>
         <div className="inline" style={{ justifyContent: "space-between" }}>
           <h2>Directory</h2>
-          <div className="inline">
-            <span className="muted">Showing {filteredEmployees.length} of {employees.length}</span>
-            <button className="ghost" type="button" onClick={() => void load()} disabled={loading}>
-              {loading ? "Refreshing..." : "Refresh"}
-            </button>
-          </div>
+          <span className="muted">Showing {filteredEmployees.length} of {employees.length}</span>
         </div>
 
         <div className="row">
