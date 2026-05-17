@@ -49,7 +49,20 @@ async function runGemini(prompt: string, asJson = false): Promise<string> {
 }
 
 export async function enhanceCeoMessage(input: string): Promise<string> {
-  const prompt = `You are rewriting an internal CEO message for team communication.\nKeep the original intent, recipients, and instructions unchanged.\nImprove clarity, professional tone, and actionability.\nPrimary output language must be Bengali (Bangla script) unless the input explicitly asks for English.\nDo not add extra instructions not present in the original.\nReturn only the rewritten message text.\n\nMessage:\n${input}`;
+  const prompt = [
+    "Rewrite this internal CEO broadcast in very simple, natural Bengali.",
+    "Style rules:",
+    "- Keep the original meaning, people, and instructions exactly the same.",
+    "- Do minimal edits only; do not over-polish.",
+    "- Use short, everyday words and short sentences.",
+    "- Avoid corporate/formal language, heavy adjectives, and dramatic wording.",
+    "- Keep it warm and direct, like normal team communication.",
+    "- Do not add any new instruction, target, or deadline.",
+    "- Primary output language: Bengali (Bangla script), unless input explicitly asks for English.",
+    "- Return only the final message text, no heading or explanation.",
+    "",
+    `Message:\n${input}`,
+  ].join("\n");
 
   return runGemini(prompt, false);
 }

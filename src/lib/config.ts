@@ -25,7 +25,7 @@ const envSchema = z.object({
   WHATSAPP_TEST_ALLOWLIST_E164: z.string().optional().default(""),
   CRON_JOB_SECRET: z.string().min(1),
   GEMINI_API_KEY: z.string().min(1),
-  GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
+  GEMINI_MODEL: z.string().default("gemini-flash-latest"),
   NEXT_PUBLIC_APP_TIMEZONE: z.string().default("Asia/Dhaka"),
   NEXT_PUBLIC_ENABLE_TEST_SCHEDULER: envBoolean.default(false),
   ADMIN_LOGIN_USERNAME: z.string().min(3).default("admin"),
