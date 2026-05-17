@@ -147,7 +147,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
     }
 
     return {
-      audienceCategory: groupAudience as BroadcastAudienceCategory,
+      audienceCategory: "custom" as BroadcastAudienceCategory,
       selectedEmployeeIds: [] as string[],
       useAiRouting: true,
     };
@@ -418,7 +418,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
                   </table>
                 </div>
               </div>
-            ) : (
+            ) : targetMode === "group" ? (
               <div className="grid" style={{ gap: 8 }}>
                 <span>Group Category</span>
                 <div className="inline">
@@ -435,9 +435,16 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
                   ))}
                 </div>
                 <span className="muted">
-                  {targetMode === "mixed"
-                    ? "AI routes the message and generates a clean preview for confirmation."
-                    : "Group selection builds a direct preview for this category."}
+                  Group selection builds a direct preview for this category.
+                </span>
+              </div>
+            ) : (
+              <div className="grid" style={{ gap: 8 }}>
+                <span className="muted">
+                  AI-only targeting is active. Recipients will come from names/groups identified in the message.
+                </span>
+                <span className="muted">
+                  No category auto-selection is applied in Mixed mode.
                 </span>
               </div>
             )}
