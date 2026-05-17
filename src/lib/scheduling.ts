@@ -8,9 +8,12 @@ import {
   completeJobRun,
   createJobRun,
   findEmployeeByWhatsAppFrom,
+  findMessageEventByWhatsAppMessageId,
   getTemplateBySlot,
   getTrackedEmployees,
   insertMessageEvent,
+  listRecentInboundClassifiedRepliesForEmployee,
+  listRecentOutboundPromptEventsForEmployee,
   markMissingForSlot,
   mergeSlotResponse,
 } from "@/lib/repository";
@@ -61,6 +64,151 @@ function extractMessages(payload: Record<string, unknown>): WhatsAppInboundMessa
   }
 
   return messages;
+}
+
+type InboundReplyCategory =
+  | "scheduled_reply"
+  | "broadcast_reply"
+  | "general_reply"
+  | "unknown_sender";
+
+type InboundReplyClassification = {
+  category: InboundReplyCategory;
+  linkedOutboundMessageId: string | null;
+  linkedOutboundCategory: string | null;
+  slotKey: SlotKey | null;
+  trackingDate: string | null;
+  reason: string;
+};
+
+const SCHEDULED_OUTBOUND_CATEGORY = "scheduled_prompt";
+const BROADCAST_OUTBOUND_CATEGORY = "ceo_broadcast_template";
+const REPLY_LOOKBACK_HOURS = 18;
+const CONTINUATION_LOOKBACK_MINUTES = 45;
+const OUTBOUND_AMBIGUITY_GAP_MINUTES = 20;
+
+function inboundReplyContextId(message: WhatsAppInboundMessage): string | null {
+  const value = message.context?.id;
+  if (!value) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+}
+
+function replyCategoryFromOutboundCategory(category: string): InboundReplyCategory | null {
+  if (category === SCHEDULED_OUTBOUND_CATEGORY) return "scheduled_reply";
+  if (category === BROADCAST_OUTBOUND_CATEGORY) return "broadcast_reply";
+  return null;
+}
+
+function minutesBetween(olderIso: string, newerIso: string): number | null {
+  const older = new Date(olderIso).getTime();
+  const newer = new Date(newerIso).getTime();
+  if (Number.isNaN(older) || Number.isNaN(newer)) return null;
+  return Math.max(0, Math.floor((newer - older) / 60000));
+}
+
+async function classifyInboundReply(input: {
+  employee: { id: string } | null;
+  message: WhatsAppInboundMessage;
+  receivedAtIso: string;
+}): Promise<InboundReplyClassification> {
+  if (!input.employee) {
+    return {
+      category: "unknown_sender",
+      linkedOutboundMessageId: null,
+      linkedOutboundCategory: null,
+      slotKey: null,
+      trackingDate: null,
+      reason: "employee_not_found",
+    };
+  }
+
+  const replyContextId = inboundReplyContextId(input.message);
+  if (replyContextId) {
+    const linked = await findMessageEventByWhatsAppMessageId(replyContextId);
+    if (linked && linked.direction === "outbound" && linked.employeeId === input.employee.id) {
+      const mappedCategory = replyCategoryFromOutboundCategory(linked.category);
+      if (mappedCategory) {
+        return {
+          category: mappedCategory,
+          linkedOutboundMessageId: linked.whatsappMessageId ?? replyContextId,
+          linkedOutboundCategory: linked.category,
+          slotKey: mappedCategory === "scheduled_reply" ? linked.slotKey : null,
+          trackingDate: mappedCategory === "scheduled_reply" ? linked.trackingDate : null,
+          reason: "context_linked_outbound",
+        };
+      }
+    }
+  }
+
+  const continuationCandidates = await listRecentInboundClassifiedRepliesForEmployee({
+    employeeId: input.employee.id,
+    occurredBefore: input.receivedAtIso,
+    lookbackMinutes: CONTINUATION_LOOKBACK_MINUTES,
+  });
+  const continuation = continuationCandidates[0];
+  if (continuation && (continuation.category === "scheduled_reply" || continuation.category === "broadcast_reply")) {
+    return {
+      category: continuation.category as InboundReplyCategory,
+      linkedOutboundMessageId: null,
+      linkedOutboundCategory: continuation.category === "scheduled_reply"
+        ? SCHEDULED_OUTBOUND_CATEGORY
+        : BROADCAST_OUTBOUND_CATEGORY,
+      slotKey: continuation.category === "scheduled_reply" ? continuation.slotKey : null,
+      trackingDate: continuation.category === "scheduled_reply" ? continuation.trackingDate : null,
+      reason: "chunk_continuation",
+    };
+  }
+
+  const recentOutbound = await listRecentOutboundPromptEventsForEmployee({
+    employeeId: input.employee.id,
+    occurredBefore: input.receivedAtIso,
+    lookbackHours: REPLY_LOOKBACK_HOURS,
+  });
+  const nearest = recentOutbound[0];
+  const secondNearest = recentOutbound[1];
+
+  if (nearest && secondNearest && nearest.category !== secondNearest.category) {
+    const gap = minutesBetween(secondNearest.occurredAt, nearest.occurredAt);
+    if (gap !== null && gap <= OUTBOUND_AMBIGUITY_GAP_MINUTES) {
+      return {
+        category: "general_reply",
+        linkedOutboundMessageId: null,
+        linkedOutboundCategory: null,
+        slotKey: null,
+        trackingDate: null,
+        reason: "ambiguous_recent_outbounds",
+      };
+    }
+  }
+
+  if (nearest) {
+    const mappedCategory = replyCategoryFromOutboundCategory(nearest.category);
+    if (mappedCategory) {
+      const ageMinutes = minutesBetween(nearest.occurredAt, input.receivedAtIso);
+      const limitMinutes = mappedCategory === "scheduled_reply" ? 16 * 60 : 6 * 60;
+
+      if (ageMinutes === null || ageMinutes <= limitMinutes) {
+        return {
+          category: mappedCategory,
+          linkedOutboundMessageId: nearest.whatsappMessageId,
+          linkedOutboundCategory: nearest.category,
+          slotKey: mappedCategory === "scheduled_reply" ? nearest.slotKey : null,
+          trackingDate: mappedCategory === "scheduled_reply" ? nearest.trackingDate : null,
+          reason: "recent_outbound_fallback",
+        };
+      }
+    }
+  }
+
+  return {
+    category: "general_reply",
+    linkedOutboundMessageId: null,
+    linkedOutboundCategory: null,
+    slotKey: null,
+    trackingDate: null,
+    reason: replyContextId ? "context_unmatched" : "no_context",
+  };
 }
 
 export async function runScheduledSlot(slot: SlotKey, now = new Date()) {
@@ -161,24 +309,42 @@ export async function processInboundWebhookPayload(payload: Record<string, unkno
     }
 
     const incomingDate = new Date(Number(message.timestamp) * 1000);
-    const trackingDate = dhakaDateISO(incomingDate, env.NEXT_PUBLIC_APP_TIMEZONE);
-    const slotKey = slotForTimestamp(incomingDate, env.NEXT_PUBLIC_APP_TIMEZONE);
+    const inboundTrackingDate = dhakaDateISO(incomingDate, env.NEXT_PUBLIC_APP_TIMEZONE);
+    const inboundSlotKey = slotForTimestamp(incomingDate, env.NEXT_PUBLIC_APP_TIMEZONE);
+    const receivedAtIso = incomingDate.toISOString();
 
     const employee = await findEmployeeByWhatsAppFrom(message.from);
     const fragment = formatInboundFragment(message);
+    const replyContextId = inboundReplyContextId(message);
+    const classification = await classifyInboundReply({
+      employee,
+      message,
+      receivedAtIso,
+    });
+
+    const scheduledTrackingDate = classification.trackingDate ?? inboundTrackingDate;
+    const scheduledSlotKey = classification.slotKey ?? inboundSlotKey;
+    const shouldMergeIntoSlot = classification.category === "scheduled_reply";
 
     await insertMessageEvent({
       employeeId: employee?.id ?? null,
       direction: "inbound",
-      category: employee ? "employee_reply" : "unknown_sender",
-      slotKey,
-      trackingDate,
+      category: classification.category,
+      slotKey: shouldMergeIntoSlot ? scheduledSlotKey : null,
+      trackingDate: shouldMergeIntoSlot ? scheduledTrackingDate : null,
       whatsappMessageId: message.id,
-      payload,
+      payload: {
+        ...payload,
+        _reply_context_message_id: replyContextId,
+        _reply_classification: classification.category,
+        _reply_linked_outbound_message_id: classification.linkedOutboundMessageId,
+        _reply_linked_outbound_category: classification.linkedOutboundCategory,
+        _reply_classification_reason: classification.reason,
+      },
       messageText: fragment,
       locationLat: message.location?.latitude ?? null,
       locationLng: message.location?.longitude ?? null,
-      receivedAt: incomingDate.toISOString(),
+      receivedAt: receivedAtIso,
     });
 
     if (!employee || !employee.tracking_enabled || !employee.is_active) {
@@ -186,11 +352,16 @@ export async function processInboundWebhookPayload(payload: Record<string, unkno
       continue;
     }
 
+    if (!shouldMergeIntoSlot) {
+      ignored += 1;
+      continue;
+    }
+
     await mergeSlotResponse({
       employeeId: employee.id,
-      trackingDate,
-      slotKey,
-      replyAt: incomingDate.toISOString(),
+      trackingDate: scheduledTrackingDate,
+      slotKey: scheduledSlotKey,
+      replyAt: receivedAtIso,
       mergedFragment: fragment,
     });
 

@@ -475,6 +475,210 @@ export async function insertMessageEvent(input: {
   ensureNoError(res.error, "Failed to insert message event");
 }
 
+export type MessageEventLink = {
+  employeeId: string | null;
+  direction: "inbound" | "outbound";
+  category: string;
+  slotKey: SlotKey | null;
+  trackingDate: string | null;
+  whatsappMessageId: string | null;
+  occurredAt: string;
+};
+
+function mapMessageEventLink(row: Record<string, unknown>): MessageEventLink {
+  const direction = row.direction === "inbound" ? "inbound" : "outbound";
+  return {
+    employeeId: row.employee_id ? String(row.employee_id) : null,
+    direction,
+    category: String(row.category ?? ""),
+    slotKey: row.slot_key ? (String(row.slot_key) as SlotKey) : null,
+    trackingDate: row.tracking_date ? String(row.tracking_date) : null,
+    whatsappMessageId: row.whatsapp_message_id ? String(row.whatsapp_message_id) : null,
+    occurredAt: row.occurred_at ? String(row.occurred_at) : new Date().toISOString(),
+  };
+}
+
+export async function findMessageEventByWhatsAppMessageId(
+  whatsappMessageId: string,
+): Promise<MessageEventLink | null> {
+  const normalized = whatsappMessageId.trim();
+  if (!normalized) return null;
+
+  const res = await supabaseAdmin
+    .from("message_events")
+    .select("employee_id,direction,category,slot_key,tracking_date,whatsapp_message_id,occurred_at")
+    .eq("whatsapp_message_id", normalized)
+    .order("occurred_at", { ascending: false })
+    .limit(1);
+
+  ensureNoError(res.error, "Failed to find message event by WhatsApp message id");
+  const row = (res.data ?? [])[0];
+  return row ? mapMessageEventLink(row as Record<string, unknown>) : null;
+}
+
+export async function listRecentOutboundPromptEventsForEmployee(input: {
+  employeeId: string;
+  occurredBefore: string;
+  lookbackHours?: number;
+}): Promise<MessageEventLink[]> {
+  const lookbackHours = Math.min(Math.max(input.lookbackHours ?? 18, 1), 72);
+  const beforeDate = new Date(input.occurredBefore);
+  const beforeMs = Number.isNaN(beforeDate.getTime()) ? Date.now() : beforeDate.getTime();
+  const afterIso = new Date(beforeMs - lookbackHours * 60 * 60 * 1000).toISOString();
+  const beforeIso = new Date(beforeMs).toISOString();
+
+  const res = await supabaseAdmin
+    .from("message_events")
+    .select("employee_id,direction,category,slot_key,tracking_date,whatsapp_message_id,occurred_at")
+    .eq("employee_id", input.employeeId)
+    .eq("direction", "outbound")
+    .in("category", ["scheduled_prompt", "ceo_broadcast_template"])
+    .gte("occurred_at", afterIso)
+    .lte("occurred_at", beforeIso)
+    .order("occurred_at", { ascending: false })
+    .limit(20);
+
+  ensureNoError(res.error, "Failed to list recent outbound prompt events");
+  return (res.data ?? []).map((row) => mapMessageEventLink(row as Record<string, unknown>));
+}
+
+export async function listRecentInboundClassifiedRepliesForEmployee(input: {
+  employeeId: string;
+  occurredBefore: string;
+  lookbackMinutes?: number;
+}): Promise<MessageEventLink[]> {
+  const lookbackMinutes = Math.min(Math.max(input.lookbackMinutes ?? 45, 1), 240);
+  const beforeDate = new Date(input.occurredBefore);
+  const beforeMs = Number.isNaN(beforeDate.getTime()) ? Date.now() : beforeDate.getTime();
+  const afterIso = new Date(beforeMs - lookbackMinutes * 60 * 1000).toISOString();
+  const beforeIso = new Date(beforeMs).toISOString();
+
+  const res = await supabaseAdmin
+    .from("message_events")
+    .select("employee_id,direction,category,slot_key,tracking_date,whatsapp_message_id,occurred_at")
+    .eq("employee_id", input.employeeId)
+    .eq("direction", "inbound")
+    .in("category", ["scheduled_reply", "broadcast_reply"])
+    .gte("occurred_at", afterIso)
+    .lte("occurred_at", beforeIso)
+    .order("occurred_at", { ascending: false })
+    .limit(8);
+
+  ensureNoError(res.error, "Failed to list recent inbound classified replies");
+  return (res.data ?? []).map((row) => mapMessageEventLink(row as Record<string, unknown>));
+}
+
+type JsonMap = Record<string, unknown>;
+
+function asJsonMap(value: unknown): JsonMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as JsonMap;
+}
+
+function extractUnknownSenderFromPayload(payload: JsonMap): string | null {
+  const directMessages = payload.messages;
+  if (Array.isArray(directMessages)) {
+    const from = asJsonMap(directMessages[0]).from;
+    if (typeof from === "string" && from.trim()) return from.trim();
+  }
+
+  const entries = payload.entry;
+  if (!Array.isArray(entries)) return null;
+
+  for (const entry of entries) {
+    const changes = asJsonMap(entry).changes;
+    if (!Array.isArray(changes)) continue;
+
+    for (const change of changes) {
+      const value = asJsonMap(change).value;
+      const messages = asJsonMap(value).messages;
+      if (!Array.isArray(messages)) continue;
+
+      for (const message of messages) {
+        const from = asJsonMap(message).from;
+        if (typeof from === "string" && from.trim()) return from.trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractFailureReason(payload: JsonMap): string | null {
+  const errors = payload.errors;
+  if (Array.isArray(errors)) {
+    const first = asJsonMap(errors[0]);
+    const value = first.message ?? first.title ?? first.details;
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+
+  const error = asJsonMap(payload.error);
+  const fallback = error.message ?? error.title ?? error.details;
+  if (typeof fallback === "string" && fallback.trim()) return fallback.trim();
+  return null;
+}
+
+export type ConversationMessageEvent = {
+  id: string;
+  employeeId: string | null;
+  direction: "inbound" | "outbound";
+  category: string;
+  slotKey: SlotKey | null;
+  trackingDate: string | null;
+  whatsappMessageId: string | null;
+  messageText: string | null;
+  occurredAt: string;
+  unknownSender: string | null;
+  replyContextMessageId: string | null;
+  linkedOutboundMessageId: string | null;
+  linkedOutboundCategory: string | null;
+  classificationReason: string | null;
+  failureReason: string | null;
+};
+
+function mapConversationMessageEvent(row: Record<string, unknown>): ConversationMessageEvent {
+  const payload = asJsonMap(row.payload);
+  const direction = row.direction === "inbound" ? "inbound" : "outbound";
+
+  return {
+    id: String(row.id ?? ""),
+    employeeId: row.employee_id ? String(row.employee_id) : null,
+    direction,
+    category: String(row.category ?? ""),
+    slotKey: row.slot_key ? (String(row.slot_key) as SlotKey) : null,
+    trackingDate: row.tracking_date ? String(row.tracking_date) : null,
+    whatsappMessageId: row.whatsapp_message_id ? String(row.whatsapp_message_id) : null,
+    messageText: row.message_text ? String(row.message_text) : null,
+    occurredAt: row.occurred_at ? String(row.occurred_at) : new Date().toISOString(),
+    unknownSender: extractUnknownSenderFromPayload(payload),
+    replyContextMessageId: typeof payload._reply_context_message_id === "string"
+      ? payload._reply_context_message_id
+      : null,
+    linkedOutboundMessageId: typeof payload._reply_linked_outbound_message_id === "string"
+      ? payload._reply_linked_outbound_message_id
+      : null,
+    linkedOutboundCategory: typeof payload._reply_linked_outbound_category === "string"
+      ? payload._reply_linked_outbound_category
+      : null,
+    classificationReason: typeof payload._reply_classification_reason === "string"
+      ? payload._reply_classification_reason
+      : null,
+    failureReason: extractFailureReason(payload),
+  };
+}
+
+export async function listConversationMessageEvents(limit = 800): Promise<ConversationMessageEvent[]> {
+  const safeLimit = Math.min(Math.max(limit, 1), 1000);
+  const res = await supabaseAdmin
+    .from("message_events")
+    .select("id,employee_id,direction,category,slot_key,tracking_date,whatsapp_message_id,message_text,payload,occurred_at")
+    .order("occurred_at", { ascending: false })
+    .limit(safeLimit);
+
+  ensureNoError(res.error, "Failed to list conversation message events");
+  return (res.data ?? []).map((row) => mapConversationMessageEvent(row as Record<string, unknown>));
+}
+
 function buildMergedText(previous: string | null, incoming: string): string {
   if (!previous || !previous.trim()) return incoming;
   return `${previous.trim()}\n---\n${incoming.trim()}`;

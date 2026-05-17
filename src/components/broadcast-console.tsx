@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { BroadcastAudienceCategory, BroadcastPreviewRoute } from "@/lib/types";
 
 type Employee = {
@@ -34,6 +34,14 @@ type BroadcastConsoleProps = {
 };
 
 type TargetMode = "mixed" | "group" | "custom";
+type ToastKind = "success" | "error" | "info";
+
+type ToastItem = {
+  id: number;
+  kind: ToastKind;
+  title: string;
+  message: string;
+};
 
 const targetModeOptions: Array<{ value: TargetMode; label: string }> = [
   { value: "mixed", label: "Mixed (AI)" },
@@ -64,12 +72,14 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
   const [previewAudienceCategory, setPreviewAudienceCategory] = useState<BroadcastAudienceCategory>("all");
   const [reviewedMessage, setReviewedMessage] = useState("");
   const [previewGeneratedAt, setPreviewGeneratedAt] = useState("");
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
 
   const [status, setStatus] = useState("Ready.");
   const [previewing, setPreviewing] = useState(false);
   const [sending, setSending] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
 
-  const reviewRef = useRef<HTMLElement | null>(null);
+  const toastCounterRef = useRef(0);
 
   const busy = previewing || sending;
 
@@ -88,6 +98,30 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
 
   const previewRecipientCount = preview?.recipients.length ?? 0;
   const previewRouteCount = preview?.routes.length ?? 0;
+
+  useEffect(() => {
+    if (!previewModalOpen) return;
+
+    function onEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && !sending) {
+        setPreviewModalOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [previewModalOpen, sending]);
+
+  function pushToast(kind: ToastKind, title: string, toastMessage: string): void {
+    toastCounterRef.current += 1;
+    const id = toastCounterRef.current;
+
+    setToasts((prev) => [...prev, { id, kind, title, message: toastMessage }].slice(-4));
+
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    }, 4200);
+  }
 
   function toggleEmployee(id: string, checked: boolean): void {
     setSelectedEmployeeIds((prev) =>
@@ -125,11 +159,13 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
     const trimmedMessage = message.trim();
     if (!trimmedMessage) {
       setStatus("Write a message before generating preview.");
+      pushToast("error", "Message required", "Please write the CEO message first.");
       return;
     }
 
     if (targetMode === "custom" && selectedEmployeeIds.length === 0) {
       setStatus("Pick at least one member for custom broadcast.");
+      pushToast("error", "No recipients", "Select at least one member for custom broadcast.");
       return;
     }
 
@@ -153,7 +189,9 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
 
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setStatus((json as { error?: string }).error ?? "Preview failed.");
+        const errorMessage = (json as { error?: string }).error ?? "Preview failed.";
+        setStatus(errorMessage);
+        pushToast("error", "Preview failed", errorMessage);
         return;
       }
 
@@ -162,13 +200,12 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       setPreviewAudienceCategory(payload.audienceCategory);
       setReviewedMessage((parsed.enhancedMessage || trimmedMessage).trim());
       setPreviewGeneratedAt(new Date().toLocaleString());
+      setPreviewModalOpen(true);
       setStatus(`Preview ready: ${parsed.recipients.length} recipient(s), ${parsed.routes.length} route(s).`);
-
-      setTimeout(() => {
-        reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 80);
+      pushToast("success", "Preview ready", `AI preview generated for ${parsed.recipients.length} recipients.`);
     } catch {
       setStatus("Preview request failed. Please retry.");
+      pushToast("error", "Network error", "Preview request failed. Please retry.");
     } finally {
       setPreviewing(false);
     }
@@ -177,12 +214,14 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
   async function onSend() {
     if (!preview) {
       setStatus("Generate preview first.");
+      pushToast("error", "Preview missing", "Please generate preview before sending.");
       return;
     }
 
     const finalMessage = reviewedMessage.trim() || message.trim();
     if (!finalMessage) {
       setStatus("Final message is empty.");
+      pushToast("error", "Final message empty", "Please enter a final message before sending.");
       return;
     }
 
@@ -198,6 +237,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
 
     if (reviewedRoutes.length === 0) {
       setStatus("No valid recipients in preview routes.");
+      pushToast("error", "No valid recipients", "Preview did not resolve any recipients to send.");
       return;
     }
 
@@ -218,7 +258,9 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
 
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setStatus((json as { error?: string }).error ?? "Broadcast failed.");
+        const errorMessage = (json as { error?: string }).error ?? "Broadcast failed.";
+        setStatus(errorMessage);
+        pushToast("error", "Broadcast failed", errorMessage);
         return;
       }
 
@@ -234,14 +276,18 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       const failurePreview = failureDetails[0];
 
       if (failed > 0 && failurePreview) {
-        setStatus(
-          `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}. First error for ${failurePreview.employeeName || "recipient"}: ${failurePreview.reason}${failurePreview.languageCode ? ` (lang: ${failurePreview.languageCode})` : ""}${failurePreview.templateVariant ? ` (variant: ${failurePreview.templateVariant})` : ""}`,
-        );
+        const partialMessage = `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}. First error for ${failurePreview.employeeName || "recipient"}: ${failurePreview.reason}${failurePreview.languageCode ? ` (lang: ${failurePreview.languageCode})` : ""}${failurePreview.templateVariant ? ` (variant: ${failurePreview.templateVariant})` : ""}`;
+        setStatus(partialMessage);
+        pushToast("info", "Broadcast sent with failures", `Accepted: ${accepted}, Failed: ${failed}`);
       } else {
-        setStatus(`Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}.`);
+        const successMessage = `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}.`;
+        setStatus(successMessage);
+        pushToast("success", "Broadcast sent", `Successfully queued ${accepted} messages.`);
+        setPreviewModalOpen(false);
       }
     } catch {
       setStatus("Broadcast request failed. Please retry.");
+      pushToast("error", "Network error", "Broadcast request failed. Please retry.");
     } finally {
       setSending(false);
     }
@@ -278,7 +324,13 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
           </label>
 
           <article className="panel grid" style={{ gap: 10 }}>
-            <span className="muted" style={{ fontWeight: 700 }}>2. Choose Audience</span>
+            <div className="inline" style={{ justifyContent: "space-between" }}>
+              <span className="muted" style={{ fontWeight: 700 }}>2. Choose Audience</span>
+              <button type="submit" disabled={busy}>
+                {previewing ? "Generating..." : "Generate AI Preview"}
+              </button>
+            </div>
+
             <div className="inline">
               {targetModeOptions.map((option) => (
                 <button
@@ -384,79 +436,119 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
                 </div>
                 <span className="muted">
                   {targetMode === "mixed"
-                    ? "AI will generate routing preview. You can edit the final message before send."
-                    : "A clean group broadcast preview will be generated for this category."}
+                    ? "AI routes the message and generates a clean preview for confirmation."
+                    : "Group selection builds a direct preview for this category."}
                 </span>
               </div>
             )}
           </article>
-
-          <div className="inline" style={{ justifyContent: "space-between" }}>
-            <span className="muted">3. Generate preview, confirm or edit, then send.</span>
-            <button type="submit" disabled={busy}>
-              {previewing ? "Generating..." : "Generate AI Preview"}
-            </button>
-          </div>
         </form>
       </article>
 
-      {preview ? (
-        <article className="card grid" style={{ gap: 12 }} ref={reviewRef}>
-          <div className="inline" style={{ justifyContent: "space-between" }}>
-            <h2>AI Preview</h2>
-            <span className="muted">
-              Recipients: {previewRecipientCount} | Routes: {previewRouteCount}
-              {previewGeneratedAt ? ` | ${previewGeneratedAt}` : ""}
-            </span>
-          </div>
+      {previewModalOpen && preview ? (
+        <div className="broadcast-modal-backdrop" role="dialog" aria-modal="true">
+          <article className="broadcast-modal">
+            <div className="broadcast-modal-head">
+              <div>
+                <h2>AI Preview</h2>
+                <p className="muted" style={{ margin: 0 }}>
+                  Structured message preview before final send
+                  {previewGeneratedAt ? ` | ${previewGeneratedAt}` : ""}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setPreviewModalOpen(false)}
+                disabled={sending}
+              >
+                Close
+              </button>
+            </div>
 
-          <label className="grid" style={{ gap: 6 }}>
-            <span>Final Message (Editable)</span>
-            <textarea
-              value={reviewedMessage}
-              onChange={(event) => setReviewedMessage(event.target.value)}
-              style={{ minHeight: 170 }}
-            />
-          </label>
+            <div className="broadcast-modal-metrics">
+              <article className="broadcast-metric-card">
+                <p className="kpi-label">Recipients</p>
+                <p className="kpi-value" style={{ fontSize: 24 }}>{previewRecipientCount}</p>
+              </article>
+              <article className="broadcast-metric-card">
+                <p className="kpi-label">Routes</p>
+                <p className="kpi-value" style={{ fontSize: 24 }}>{previewRouteCount}</p>
+              </article>
+              <article className="broadcast-metric-card">
+                <p className="kpi-label">Template</p>
+                <p className="kpi-sub" style={{ color: "#14395e", fontWeight: 700 }}>{templateName}</p>
+              </article>
+            </div>
 
-          <div className="table-wrap" style={{ maxHeight: 240, overflowY: "auto" }}>
-            <table>
-              <thead>
-                <tr>
-                  <th style={{ minWidth: 220 }}>Target</th>
-                  <th style={{ minWidth: 140 }}>Source</th>
-                  <th style={{ minWidth: 140 }}>Recipients</th>
-                  <th style={{ minWidth: 120 }}>Confidence</th>
-                </tr>
-              </thead>
-              <tbody>
-                {preview.routes.map((route) => (
-                  <tr key={route.routeId}>
-                    <td>{route.targetLabel}</td>
-                    <td>{route.source}</td>
-                    <td>{route.recipientEmployeeIds.length}</td>
-                    <td>{Math.round(route.confidence * 100)}%</td>
+            <label className="grid" style={{ gap: 6 }}>
+              <span>Final Message (Editable)</span>
+              <textarea
+                value={reviewedMessage}
+                onChange={(event) => setReviewedMessage(event.target.value)}
+                style={{ minHeight: 180 }}
+              />
+            </label>
+
+            <div className="table-wrap" style={{ maxHeight: 240, overflowY: "auto" }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ minWidth: 220 }}>Target</th>
+                    <th style={{ minWidth: 140 }}>Source</th>
+                    <th style={{ minWidth: 140 }}>Recipients</th>
+                    <th style={{ minWidth: 120 }}>Confidence</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {preview.routes.map((route) => (
+                    <tr key={route.routeId}>
+                      <td>{route.targetLabel}</td>
+                      <td>{route.source}</td>
+                      <td>{route.recipientEmployeeIds.length}</td>
+                      <td>{Math.round(route.confidence * 100)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {preview.unresolvedMentions.length ? (
+              <p className="muted">Unresolved mentions: {preview.unresolvedMentions.join(", ")}</p>
+            ) : null}
+            {preview.unresolvedAiTargets.length ? (
+              <p className="muted">Unresolved AI targets: {preview.unresolvedAiTargets.join(", ")}</p>
+            ) : null}
+
+            <div className="inline" style={{ justifyContent: "space-between" }}>
+              <span className="muted">Confirm and send this message.</span>
+              <button type="button" onClick={() => void onSend()} disabled={busy}>
+                {sending ? "Sending..." : "Confirm & Send"}
+              </button>
+            </div>
+          </article>
+        </div>
+      ) : null}
+
+      {toasts.length > 0 ? (
+        <div className="toast-stack" aria-live="polite" aria-atomic="false">
+          {toasts.map((toast) => (
+            <article key={toast.id} className={`toast-card toast-${toast.kind}`}>
+              <strong>{toast.title}</strong>
+              <p>{toast.message}</p>
+            </article>
+          ))}
+        </div>
+      ) : null}
+
+      {busy ? (
+        <div className="broadcast-busy-overlay" aria-live="polite">
+          <div className="broadcast-busy-card">
+            <span className="status-spinner status-spinner-lg" aria-hidden="true" />
+            <strong>{previewing ? "Generating preview" : "Sending broadcast"}</strong>
+            <p>{previewing ? "AI is preparing a structured preview..." : "Your broadcast is being queued now..."}</p>
           </div>
-
-          {preview.unresolvedMentions.length ? (
-            <p className="muted">Unresolved mentions: {preview.unresolvedMentions.join(", ")}</p>
-          ) : null}
-
-          {preview.unresolvedAiTargets.length ? (
-            <p className="muted">Unresolved AI targets: {preview.unresolvedAiTargets.join(", ")}</p>
-          ) : null}
-
-          <div className="inline" style={{ justifyContent: "space-between" }}>
-            <span className="muted">Confirm this message and send broadcast.</span>
-            <button type="button" onClick={() => void onSend()} disabled={busy}>
-              {sending ? "Sending..." : "Send Broadcast"}
-            </button>
-          </div>
-        </article>
+        </div>
       ) : null}
     </section>
   );

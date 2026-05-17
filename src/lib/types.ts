@@ -12,6 +12,10 @@ export type WhatsAppInboundMessage = {
   from: string;
   timestamp: string;
   type: string;
+  context?: {
+    id?: string;
+    from?: string;
+  };
   text?: {
     body?: string;
   };
