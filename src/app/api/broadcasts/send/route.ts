@@ -31,6 +31,47 @@ function dedupe<T>(values: T[]): T[] {
   return Array.from(new Set(values));
 }
 
+function languageCandidates(): string[] {
+  const preferred = env.WHATSAPP_BROADCAST_TEMPLATE_LANGUAGE.trim();
+  const fallbacks = ["en_US", "en", "bn", "bn_BD"];
+  return Array.from(new Set([preferred, ...fallbacks].map((item) => item.trim()).filter(Boolean)));
+}
+
+function isTranslationError(error: unknown): boolean {
+  const message = (error as Error).message ?? "";
+  const normalized = message.toLowerCase();
+  return normalized.includes("132001") || normalized.includes("does not exist in the translation");
+}
+
+function isTemplateParameterError(error: unknown): boolean {
+  const message = (error as Error).message ?? "";
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("132000") ||
+    normalized.includes("localizable_params") ||
+    normalized.includes("number of parameters") ||
+    normalized.includes("required parameter")
+  );
+}
+
+function parameterVariants(employeeName: string, message: string) {
+  const safeEmployeeName = employeeName.trim().slice(0, 120) || "Team Member";
+  const safeBody = message.slice(0, 1000);
+  return [
+    {
+      name: "employee_name+body",
+      bodyParameters: [
+        { type: "text" as const, parameterName: "employee_name", text: safeEmployeeName },
+        { type: "text" as const, parameterName: "body", text: safeBody },
+      ],
+    },
+    {
+      name: "body_only",
+      bodyParameters: [{ type: "text" as const, parameterName: "body", text: safeBody }],
+    },
+  ];
+}
+
 export async function POST(request: Request) {
   if (!(await requestHasAdminSession(request))) {
     return fail("Unauthorized", 401);
@@ -61,6 +102,8 @@ export async function POST(request: Request) {
 
   let accepted = 0;
   let failed = 0;
+  const languages = languageCandidates();
+  const failureDetails: Array<{ employeeName: string; reason: string; languageCode: string; templateVariant: string }> = [];
 
   for (const route of parsed.data.reviewedRoutes) {
     const routeMessage = route.message.trim() || parsed.data.finalMessage;
@@ -69,19 +112,42 @@ export async function POST(request: Request) {
       const employee = recipientsById.get(employeeId);
       if (!employee) continue;
 
+      let attemptedLanguage = "";
+      let attemptedTemplateVariant = "";
       try {
-        const response = await sendDynamicTemplateMessage({
-          toE164: employee.whatsapp_e164,
-          templateName: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
-          languageCode: "en",
-          bodyParameters: [
-            {
-              type: "text",
-              parameterName: "body",
-              text: routeMessage.slice(0, 1000),
-            },
-          ],
-        });
+        let response: { id?: string } | null = null;
+        let usedLanguage = "";
+        let usedTemplateVariant = "";
+        let lastError: Error | null = null;
+
+        for (const variant of parameterVariants(employee.full_name, routeMessage)) {
+          for (const languageCode of languages) {
+            attemptedLanguage = languageCode;
+            attemptedTemplateVariant = variant.name;
+            try {
+              response = await sendDynamicTemplateMessage({
+                toE164: employee.whatsapp_e164,
+                templateName: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
+                languageCode,
+                bodyParameters: variant.bodyParameters,
+              });
+              usedLanguage = languageCode;
+              usedTemplateVariant = variant.name;
+              break;
+            } catch (error) {
+              lastError = error as Error;
+              if (isTranslationError(error) || isTemplateParameterError(error)) {
+                continue;
+              }
+              throw error;
+            }
+          }
+          if (response) break;
+        }
+
+        if (!response) {
+          throw lastError ?? new Error("Broadcast send failed: no language candidate succeeded");
+        }
 
         await insertBroadcastDelivery({
           campaignId,
@@ -92,6 +158,8 @@ export async function POST(request: Request) {
             routeId: route.routeId,
             routeSource: route.source,
             targetLabel: route.targetLabel,
+            languageCode: usedLanguage,
+            templateVariant: usedTemplateVariant,
           },
         });
 
@@ -107,17 +175,20 @@ export async function POST(request: Request) {
             routeSource: route.source,
             routeTargetLabel: route.targetLabel,
             template: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
+            languageCode: usedLanguage,
+            templateVariant: usedTemplateVariant,
           },
           messageText: routeMessage,
         });
 
         accepted += 1;
       } catch (error) {
+        const reason = (error as Error).message;
         await insertBroadcastDelivery({
           campaignId,
           employeeId: employee.id,
           status: "failed",
-          failureReason: (error as Error).message,
+          failureReason: reason,
           statusPayload: {
             routeId: route.routeId,
             routeSource: route.source,
@@ -125,6 +196,12 @@ export async function POST(request: Request) {
           },
         });
 
+        failureDetails.push({
+          employeeName: employee.full_name,
+          reason,
+          languageCode: attemptedLanguage || env.WHATSAPP_BROADCAST_TEMPLATE_LANGUAGE,
+          templateVariant: attemptedTemplateVariant || "unknown",
+        });
         failed += 1;
       }
     }
@@ -137,5 +214,6 @@ export async function POST(request: Request) {
     failed,
     routes: parsed.data.reviewedRoutes.length,
     recipients: recipients.length,
+    failureDetails: failureDetails.slice(0, 10),
   });
 }

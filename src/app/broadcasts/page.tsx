@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { isLoggedIn } from "@/lib/auth";
 import { env } from "@/lib/config";
-import { listEmployees, listTags } from "@/lib/repository";
+import { listEmployees } from "@/lib/repository";
 import { AdminNav } from "@/components/admin-nav";
 import { BroadcastConsole } from "@/components/broadcast-console";
 
@@ -10,7 +10,7 @@ export default async function BroadcastsPage() {
     redirect("/login");
   }
 
-  const [employees, tags] = await Promise.all([listEmployees(), listTags()]);
+  const employees = await listEmployees();
 
   return (
     <main className="page">
@@ -22,7 +22,6 @@ export default async function BroadcastsPage() {
       </p>
       <BroadcastConsole
         initialEmployees={employees.filter((employee) => employee.is_active)}
-        initialTags={tags}
         templateName={env.WHATSAPP_BROADCAST_TEMPLATE_NAME}
       />
     </main>

@@ -115,6 +115,22 @@ a {
   padding: 12px;
 }
 
+.status-banner {
+  position: sticky;
+  top: 10px;
+  z-index: 35;
+  box-shadow: 0 10px 24px rgba(8, 37, 63, 0.12);
+}
+
+.status-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #a5c2df;
+  border-top-color: #0f4c81;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 .kpi-card {
   display: grid;
   gap: 6px;
@@ -354,6 +370,12 @@ details summary {
   }
   100% {
     background-position: 220% 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
