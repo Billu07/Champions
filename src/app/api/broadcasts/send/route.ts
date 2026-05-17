@@ -31,6 +31,40 @@ function dedupe<T>(values: T[]): T[] {
   return Array.from(new Set(values));
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function candidateNamesForEmployee(fullName: string, aliases: string[] = []): string[] {
+  const base = fullName.trim();
+  const parts = base.split(/\s+/).filter(Boolean);
+  const short = parts.length > 1 ? parts[parts.length - 1] : "";
+
+  return dedupe([base, ...aliases.map((item) => item.trim()), short])
+    .filter((item) => item.length >= 2)
+    .sort((a, b) => b.length - a.length);
+}
+
+function stripLeadingNameMentions(message: string, names: string[]): string {
+  let text = message.trim();
+  if (!text) return "";
+
+  for (const name of names) {
+    const escaped = escapeRegExp(name);
+    const pattern = new RegExp(
+      `^${escaped}(?:\\s*(?:,|:|;|\\.|!|\\?|\\-|–|—|।)\\s*|\\s+)`,
+      "iu",
+    );
+
+    if (pattern.test(text)) {
+      text = text.replace(pattern, "").trim();
+      break;
+    }
+  }
+
+  return text;
+}
+
 function languageCandidates(): string[] {
   const preferred = env.WHATSAPP_BROADCAST_TEMPLATE_LANGUAGE.trim();
   const fallbacks = ["en_US", "en", "bn", "bn_BD"];
@@ -47,7 +81,10 @@ function isTemplateParameterError(error: unknown): boolean {
   const message = (error as Error).message ?? "";
   const normalized = message.toLowerCase();
   return (
+    normalized.includes("132018") ||
     normalized.includes("132000") ||
+    normalized.includes("issue with the parameters in your template") ||
+    normalized.includes("parameter at index") ||
     normalized.includes("localizable_params") ||
     normalized.includes("number of parameters") ||
     normalized.includes("required parameter")
@@ -57,17 +94,33 @@ function isTemplateParameterError(error: unknown): boolean {
 function parameterVariants(employeeName: string, message: string) {
   const safeEmployeeName = employeeName.trim().slice(0, 120) || "Team Member";
   const safeBody = message.slice(0, 1000);
+  const compactBody = safeBody.replace(/\s*\n+\s*/g, " ").replace(/\s{2,}/g, " ").trim();
   return [
     {
-      name: "employee_name+body",
+      name: "named_employee_name+body",
       bodyParameters: [
         { type: "text" as const, parameterName: "employee_name", text: safeEmployeeName },
         { type: "text" as const, parameterName: "body", text: safeBody },
       ],
     },
     {
-      name: "body_only",
+      name: "named_body_only",
       bodyParameters: [{ type: "text" as const, parameterName: "body", text: safeBody }],
+    },
+    {
+      name: "positional_employee_name+body",
+      bodyParameters: [
+        { type: "text" as const, text: safeEmployeeName },
+        { type: "text" as const, text: safeBody },
+      ],
+    },
+    {
+      name: "positional_body_only",
+      bodyParameters: [{ type: "text" as const, text: safeBody }],
+    },
+    {
+      name: "positional_body_compact",
+      bodyParameters: [{ type: "text" as const, text: compactBody || safeBody }],
     },
   ];
 }
@@ -111,6 +164,10 @@ export async function POST(request: Request) {
     for (const employeeId of dedupe(route.recipientEmployeeIds)) {
       const employee = recipientsById.get(employeeId);
       if (!employee) continue;
+      const recipientNames = candidateNamesForEmployee(employee.full_name, employee.aliases ?? []);
+      const personalizedRouteMessage = route.source === "ai_person"
+        ? (stripLeadingNameMentions(routeMessage, recipientNames) || routeMessage)
+        : routeMessage;
 
       let attemptedLanguage = "";
       let attemptedTemplateVariant = "";
@@ -120,7 +177,7 @@ export async function POST(request: Request) {
         let usedTemplateVariant = "";
         let lastError: Error | null = null;
 
-        for (const variant of parameterVariants(employee.full_name, routeMessage)) {
+        for (const variant of parameterVariants(employee.full_name, personalizedRouteMessage)) {
           for (const languageCode of languages) {
             attemptedLanguage = languageCode;
             attemptedTemplateVariant = variant.name;
@@ -177,8 +234,9 @@ export async function POST(request: Request) {
             template: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
             languageCode: usedLanguage,
             templateVariant: usedTemplateVariant,
+            bodySanitizedForRecipientName: route.source === "ai_person",
           },
-          messageText: routeMessage,
+          messageText: personalizedRouteMessage,
         });
 
         accepted += 1;

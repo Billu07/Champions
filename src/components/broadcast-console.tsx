@@ -232,7 +232,10 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
         targetLabel: route.targetLabel,
         source: route.source,
         recipientEmployeeIds: route.recipientEmployeeIds,
-        message: finalMessage,
+        message:
+          route.source === "ai_person" || route.source === "ai_group"
+            ? (route.instruction.trim() || finalMessage)
+            : finalMessage,
       }));
 
     if (reviewedRoutes.length === 0) {
@@ -505,6 +508,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
                     <th style={{ minWidth: 140 }}>Source</th>
                     <th style={{ minWidth: 140 }}>Recipients</th>
                     <th style={{ minWidth: 120 }}>Confidence</th>
+                    <th style={{ minWidth: 260 }}>Route Message</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -514,6 +518,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
                       <td>{route.source}</td>
                       <td>{route.recipientEmployeeIds.length}</td>
                       <td>{Math.round(route.confidence * 100)}%</td>
+                      <td>{route.instruction}</td>
                     </tr>
                   ))}
                 </tbody>

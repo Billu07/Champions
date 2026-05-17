@@ -49,11 +49,21 @@ async function send(body: Record<string, unknown>): Promise<{ id?: string }> {
 
   const json = (await response.json().catch(() => ({}))) as {
     messages?: Array<{ id?: string }>;
-    error?: { message?: string };
+    error?: {
+      message?: string;
+      code?: number;
+      error_subcode?: number;
+      error_data?: {
+        details?: string;
+      };
+    };
   };
 
   if (!response.ok) {
-    throw new Error(json.error?.message || "WhatsApp API send failed");
+    const message = json.error?.message?.trim() || "WhatsApp API send failed";
+    const code = json.error?.code ? `(${json.error.code}) ` : "";
+    const details = json.error?.error_data?.details?.trim();
+    throw new Error(`${code}${message}${details ? ` | ${details}` : ""}`);
   }
 
   return { id: json.messages?.[0]?.id };
