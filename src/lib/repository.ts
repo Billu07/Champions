@@ -59,6 +59,7 @@ function ensureNoError(error: { message: string } | null, fallback: string): voi
 }
 
 type EmployeesSchemaMode = "modern" | "legacy";
+type BroadcastDeliverySchemaMode = "modern" | "legacy";
 
 const MODERN_EMPLOYEE_SELECT =
   "id,full_name,designation,department,branch,whatsapp_number_raw,whatsapp_e164,tracking_enabled,is_active,status,aliases,notes";
@@ -67,6 +68,7 @@ const LEGACY_EMPLOYEE_SELECT =
 
 let cachedEmployeeSchema: EmployeesSchemaMode | null = null;
 let cachedTagSupport: boolean | null = null;
+let cachedBroadcastDeliverySchema: BroadcastDeliverySchemaMode | null = null;
 
 function isMissingColumnOrTableError(error: { message?: string } | null | undefined): boolean {
   if (!error?.message) return false;
@@ -162,6 +164,31 @@ async function hasTagTables(): Promise<boolean> {
 
   cachedTagSupport = false;
   return false;
+}
+
+async function getBroadcastDeliverySchemaMode(): Promise<BroadcastDeliverySchemaMode> {
+  if (cachedBroadcastDeliverySchema) return cachedBroadcastDeliverySchema;
+
+  const probe = await supabaseAdmin
+    .from("broadcast_deliveries")
+    .select("last_status_at,status_payload")
+    .limit(1);
+
+  if (!probe.error) {
+    cachedBroadcastDeliverySchema = "modern";
+    return cachedBroadcastDeliverySchema;
+  }
+
+  if (isMissingColumnOrTableError(probe.error)) {
+    cachedBroadcastDeliverySchema = "legacy";
+    return cachedBroadcastDeliverySchema;
+  }
+
+  throw new Error(probe.error.message || "Failed to detect broadcast delivery schema mode");
+}
+
+function legacyDeliveryStatus(status: BroadcastDeliveryLifecycleStatus): "sent" | "failed" {
+  return status === "failed" ? "failed" : "sent";
 }
 
 async function fetchEmployees(options?: {
@@ -821,15 +848,25 @@ export async function insertBroadcastDelivery(input: {
   lastStatusAt?: string | null;
   statusPayload?: Record<string, unknown>;
 }) {
-  const res = await supabaseAdmin.from("broadcast_deliveries").insert({
-    campaign_id: input.campaignId,
-    employee_id: input.employeeId,
-    whatsapp_message_id: input.whatsappMessageId ?? null,
-    status: input.status,
-    failure_reason: input.failureReason ?? null,
-    last_status_at: input.lastStatusAt ?? new Date().toISOString(),
-    status_payload: input.statusPayload ?? {},
-  });
+  const mode = await getBroadcastDeliverySchemaMode();
+
+  const res = mode === "modern"
+    ? await supabaseAdmin.from("broadcast_deliveries").insert({
+      campaign_id: input.campaignId,
+      employee_id: input.employeeId,
+      whatsapp_message_id: input.whatsappMessageId ?? null,
+      status: input.status,
+      failure_reason: input.failureReason ?? null,
+      last_status_at: input.lastStatusAt ?? new Date().toISOString(),
+      status_payload: input.statusPayload ?? {},
+    })
+    : await supabaseAdmin.from("broadcast_deliveries").insert({
+      campaign_id: input.campaignId,
+      employee_id: input.employeeId,
+      whatsapp_message_id: input.whatsappMessageId ?? null,
+      status: legacyDeliveryStatus(input.status),
+      failure_reason: input.failureReason ?? null,
+    });
 
   ensureNoError(res.error, "Failed to insert broadcast delivery");
 }
@@ -849,6 +886,7 @@ export async function updateBroadcastDeliveryStatusByMessageId(input: {
   occurredAt?: string | null;
   payload?: Record<string, unknown>;
 }) {
+  const mode = await getBroadcastDeliverySchemaMode();
   const existing = await supabaseAdmin
     .from("broadcast_deliveries")
     .select("id,campaign_id,employee_id,status")
@@ -872,15 +910,23 @@ export async function updateBroadcastDeliveryStatusByMessageId(input: {
     statusRank(input.status) >= statusRank(currentStatus);
 
   if (shouldUpdate) {
-    const updateRes = await supabaseAdmin
-      .from("broadcast_deliveries")
-      .update({
-        status: input.status,
-        failure_reason: input.failureReason ?? null,
-        last_status_at: input.occurredAt ?? new Date().toISOString(),
-        status_payload: input.payload ?? {},
-      })
-      .eq("id", existing.data.id);
+    const updateRes = mode === "modern"
+      ? await supabaseAdmin
+        .from("broadcast_deliveries")
+        .update({
+          status: input.status,
+          failure_reason: input.failureReason ?? null,
+          last_status_at: input.occurredAt ?? new Date().toISOString(),
+          status_payload: input.payload ?? {},
+        })
+        .eq("id", existing.data.id)
+      : await supabaseAdmin
+        .from("broadcast_deliveries")
+        .update({
+          status: legacyDeliveryStatus(input.status),
+          failure_reason: input.failureReason ?? null,
+        })
+        .eq("id", existing.data.id);
 
     ensureNoError(updateRes.error, "Failed to update broadcast delivery status");
   }
