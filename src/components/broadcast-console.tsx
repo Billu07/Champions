@@ -193,6 +193,46 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
     };
   }
 
+  function buildReviewedRoutesForSend(previewPayload: PreviewResponse, finalMessage: string) {
+    return previewPayload.routes
+      .filter((route) => route.recipientEmployeeIds.length > 0)
+      .map((route) => ({
+        routeId: route.routeId,
+        targetLabel: route.targetLabel,
+        source: route.source,
+        recipientEmployeeIds: route.recipientEmployeeIds,
+        message:
+          route.source === "ai_person" || route.source === "ai_group"
+            ? (route.instruction.trim() || finalMessage)
+            : finalMessage,
+      }));
+  }
+
+  function applySendResponse(json: Record<string, unknown>) {
+    const accepted = Number(
+      (json as { accepted?: number; sent?: number }).accepted ??
+        (json as { sent?: number }).sent ??
+        0,
+    );
+    const failed = Number((json as { failed?: number }).failed ?? 0);
+    const failureDetails = ((json as { failureDetails?: BroadcastSendFailure[] }).failureDetails ?? []).filter(
+      (item) => item.reason,
+    );
+    const failurePreview = failureDetails[0];
+
+    if (failed > 0 && failurePreview) {
+      const partialMessage = `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}. First error for ${failurePreview.employeeName || "recipient"}: ${failurePreview.reason}${failurePreview.languageCode ? ` (lang: ${failurePreview.languageCode})` : ""}${failurePreview.templateVariant ? ` (variant: ${failurePreview.templateVariant})` : ""}`;
+      setStatus(partialMessage);
+      pushToast("info", "Broadcast sent with failures", `Accepted: ${accepted}, Failed: ${failed}`);
+      return;
+    }
+
+    const successMessage = `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}.`;
+    setStatus(successMessage);
+    pushToast("success", "Broadcast sent", `Successfully queued ${accepted} messages.`);
+    setPreviewModalOpen(false);
+  }
+
   async function onPreview(event: FormEvent) {
     event.preventDefault();
 
@@ -271,18 +311,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       return;
     }
 
-    const reviewedRoutes = preview.routes
-      .filter((route) => route.recipientEmployeeIds.length > 0)
-      .map((route) => ({
-        routeId: route.routeId,
-        targetLabel: route.targetLabel,
-        source: route.source,
-        recipientEmployeeIds: route.recipientEmployeeIds,
-        message:
-          route.source === "ai_person" || route.source === "ai_group"
-            ? (route.instruction.trim() || finalMessage)
-            : finalMessage,
-      }));
+    const reviewedRoutes = buildReviewedRoutesForSend(preview, finalMessage);
 
     if (reviewedRoutes.length === 0) {
       setStatus("No valid recipients in preview routes.");
@@ -313,27 +342,90 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
         return;
       }
 
-      const accepted = Number(
-        (json as { accepted?: number; sent?: number }).accepted ??
-          (json as { sent?: number }).sent ??
-          0,
-      );
-      const failed = Number((json as { failed?: number }).failed ?? 0);
-      const failureDetails = ((json as { failureDetails?: BroadcastSendFailure[] }).failureDetails ?? []).filter(
-        (item) => item.reason,
-      );
-      const failurePreview = failureDetails[0];
+      applySendResponse(json as Record<string, unknown>);
+    } catch {
+      setStatus("Broadcast request failed. Please retry.");
+      pushToast("error", "Network error", "Broadcast request failed. Please retry.");
+    } finally {
+      setSending(false);
+    }
+  }
 
-      if (failed > 0 && failurePreview) {
-        const partialMessage = `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}. First error for ${failurePreview.employeeName || "recipient"}: ${failurePreview.reason}${failurePreview.languageCode ? ` (lang: ${failurePreview.languageCode})` : ""}${failurePreview.templateVariant ? ` (variant: ${failurePreview.templateVariant})` : ""}`;
-        setStatus(partialMessage);
-        pushToast("info", "Broadcast sent with failures", `Accepted: ${accepted}, Failed: ${failed}`);
-      } else {
-        const successMessage = `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}.`;
-        setStatus(successMessage);
-        pushToast("success", "Broadcast sent", `Successfully queued ${accepted} messages.`);
-        setPreviewModalOpen(false);
+  async function onSendWithoutPreview() {
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage) {
+      setStatus("Write a message before sending.");
+      pushToast("error", "Message required", "Please write the CEO message first.");
+      return;
+    }
+
+    if (targetMode === "mixed") {
+      setStatus("Mixed mode requires AI preview before send.");
+      pushToast("info", "Preview required", "Mixed (AI) mode must use preview before send.");
+      return;
+    }
+
+    if (targetMode === "custom" && selectedEmployeeIds.length === 0) {
+      setStatus("Pick at least one member for custom broadcast.");
+      pushToast("error", "No recipients", "Select at least one member for custom broadcast.");
+      return;
+    }
+
+    setSending(true);
+    setStatus("Sending without AI preview...");
+
+    const payload = buildPreviewPayload();
+
+    try {
+      const previewRes = await fetch("/api/broadcasts/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: trimmedMessage,
+          audienceCategory: payload.audienceCategory,
+          selectedEmployeeIds: payload.selectedEmployeeIds,
+          selectedTagKeys: [],
+          useAiRouting: false,
+        }),
+      });
+
+      const previewJson = await previewRes.json().catch(() => ({}));
+      if (!previewRes.ok) {
+        const errorMessage = (previewJson as { error?: string }).error ?? "Recipient resolution failed.";
+        setStatus(errorMessage);
+        pushToast("error", "Send failed", errorMessage);
+        return;
       }
+
+      const parsed = previewJson as PreviewResponse;
+      const reviewedRoutes = buildReviewedRoutesForSend(parsed, trimmedMessage);
+
+      if (reviewedRoutes.length === 0) {
+        setStatus("No valid recipients available for send.");
+        pushToast("error", "No recipients", "No valid recipients available for selected audience.");
+        return;
+      }
+
+      const sendRes = await fetch("/api/broadcasts/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          originalMessage: trimmedMessage,
+          finalMessage: trimmedMessage,
+          audienceCategory: payload.audienceCategory,
+          reviewedRoutes,
+        }),
+      });
+
+      const sendJson = await sendRes.json().catch(() => ({}));
+      if (!sendRes.ok) {
+        const errorMessage = (sendJson as { error?: string }).error ?? "Broadcast failed.";
+        setStatus(errorMessage);
+        pushToast("error", "Broadcast failed", errorMessage);
+        return;
+      }
+
+      applySendResponse(sendJson as Record<string, unknown>);
     } catch {
       setStatus("Broadcast request failed. Please retry.");
       pushToast("error", "Network error", "Broadcast request failed. Please retry.");
@@ -375,9 +467,20 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
           <article className="panel grid broadcast-audience" style={{ gap: 10 }}>
             <div className="inline broadcast-audience-head" style={{ justifyContent: "space-between" }}>
               <span className="muted" style={{ fontWeight: 700 }}>2. Choose Audience</span>
-              <button type="submit" disabled={busy}>
-                {previewing ? "Generating..." : "Generate AI Preview"}
-              </button>
+              <div className="inline">
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => void onSendWithoutPreview()}
+                  disabled={busy || targetMode === "mixed"}
+                  title={targetMode === "mixed" ? "Mixed mode requires AI preview" : "Send directly without opening preview"}
+                >
+                  {sending ? "Sending..." : "Send Without AI Preview"}
+                </button>
+                <button type="submit" disabled={busy}>
+                  {previewing ? "Generating..." : "Generate AI Preview"}
+                </button>
+              </div>
             </div>
 
             <div className="inline broadcast-target-modes">
