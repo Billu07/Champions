@@ -328,7 +328,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
   }, [employees]);
 
   return (
-    <section className="grid" style={{ gap: 16 }}>
+    <section className="grid employee-manager" style={{ gap: 16 }}>
       <div className="kpi-grid">
         <article className="card kpi-card">
           <p className="kpi-label">Total Members</p>
@@ -348,7 +348,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
         </article>
       </div>
 
-      <article className="card grid" style={{ gap: 10 }}>
+      <article className="card grid employee-actions" style={{ gap: 10 }}>
         <div className="inline" style={{ justifyContent: "space-between" }}>
           <h2>Member Actions</h2>
           <div className="inline">
@@ -401,7 +401,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
       </article>
 
       {editorOpen ? (
-        <form className="card grid" onSubmit={onSubmit} style={{ gap: 12 }} ref={editorRef}>
+        <form className="card grid member-editor" onSubmit={onSubmit} style={{ gap: 12 }} ref={editorRef}>
           <div className="inline" style={{ justifyContent: "space-between" }}>
             <h2>{editing ? `Edit Member: ${form.fullName}` : "Add Member"}</h2>
             <button className="ghost" type="button" onClick={() => resetForm()}>
@@ -532,7 +532,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
         </form>
       ) : null}
 
-      <article className="card grid" style={{ gap: 10 }}>
+      <article className="card grid tag-creator" style={{ gap: 10 }}>
         <h2>Create Tag</h2>
         <div className="row">
           <label className="col-6 grid" style={{ gap: 6 }}>
@@ -561,7 +561,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
         </div>
       </article>
 
-      <article className="card grid" style={{ gap: 10 }}>
+      <article className="card grid directory-panel" style={{ gap: 10 }}>
         <div className="inline" style={{ justifyContent: "space-between" }}>
           <h2>Directory</h2>
           <span className="muted">Showing {filteredEmployees.length} of {employees.length}</span>

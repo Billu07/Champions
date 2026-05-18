@@ -27,7 +27,7 @@ export default async function DashboardPage() {
         Daily operational health across scheduling, replies, broadcasts, and daily/weekly/monthly reporting.
       </p>
 
-      <section className="kpi-grid" style={{ marginTop: 14 }}>
+      <section className="kpi-grid dashboard-kpis" style={{ marginTop: 14 }}>
         <article className="card kpi-card">
           <p className="kpi-label">Active Members</p>
           <p className="kpi-value">{metrics.employees.active}</p>
@@ -68,8 +68,8 @@ export default async function DashboardPage() {
         ) : null}
       </section>
 
-      <section className="grid" style={{ gap: 12, marginTop: 16 }}>
-        <article className="card">
+      <section className="grid dashboard-panels" style={{ gap: 12, marginTop: 16 }}>
+        <article className="card dashboard-campaigns">
           <div className="inline" style={{ justifyContent: "space-between" }}>
             <h2>Recent Broadcast Campaigns</h2>
             <span className="muted">Last {campaigns.length}</span>
@@ -111,7 +111,7 @@ export default async function DashboardPage() {
           </div>
         </article>
 
-        <article className="card">
+        <article className="card dashboard-reports">
           <div className="inline" style={{ justifyContent: "space-between" }}>
             <h2>Latest Reports</h2>
             <span className="muted">{reports.length} loaded</span>

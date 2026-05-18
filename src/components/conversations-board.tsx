@@ -265,8 +265,8 @@ export function ConversationsBoard({ initialEmployees, initialEvents }: Conversa
   );
 
   return (
-    <section className="grid" style={{ gap: 14 }}>
-      <article className="card grid" style={{ gap: 10 }}>
+    <section className="grid conversations-board" style={{ gap: 14 }}>
+      <article className="card grid conversations-toolbar" style={{ gap: 10 }}>
         <div className="inline" style={{ justifyContent: "space-between" }}>
           <h2>WhatsApp Conversations</h2>
           <span className="pill">Threads: {filteredThreads.length}</span>

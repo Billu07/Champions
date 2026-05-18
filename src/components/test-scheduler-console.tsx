@@ -213,8 +213,8 @@ export function TestSchedulerConsole({
   }, [autoDispatch, dispatchDue]);
 
   return (
-    <section className="grid" style={{ gap: 16 }}>
-      <article className="card grid" style={{ gap: 12 }}>
+    <section className="grid test-scheduler-console" style={{ gap: 16 }}>
+      <article className="card grid test-scheduler-create" style={{ gap: 12 }}>
         <h2>Create Test Schedule</h2>
         <p>
           Choose recipients, pick slot template, and set schedule time. Auto-dispatch works while this page stays open.
@@ -361,7 +361,7 @@ export function TestSchedulerConsole({
         </form>
       </article>
 
-      <article className="card grid" style={{ gap: 10 }}>
+      <article className="card grid test-scheduler-queue" style={{ gap: 10 }}>
         <h2>Schedule Queue</h2>
         <p>Pending: {pendingCount}</p>
 

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { isLoggedIn } from "@/lib/auth";
 import { env } from "@/lib/config";
 
@@ -43,31 +44,46 @@ export default async function HomePage() {
   return (
     <main className="page">
       <header className="topbar">
-        <div className="brand">Champions Family Ops</div>
+        <div className="brand-shell">
+          <span className="brand-badge brand-logo-wrap" aria-hidden="true">
+            <Image
+              src="/brand/logo-c.png"
+              alt=""
+              width={303}
+              height={120}
+              priority
+              className="brand-logo"
+            />
+          </span>
+          <div className="brand-copy">
+            <span className="brand-title">Champions Family</span>
+            <span className="brand-subtitle">Ops Console</span>
+          </div>
+        </div>
+
         <nav className="nav">
           {loggedIn ? (
             <>
-              <Link href="/dashboard">Dashboard</Link>
-              <Link href="/employees">Employees</Link>
-              <Link href="/broadcasts">Broadcasts</Link>
-              <Link href="/reports">Reports</Link>
-              {env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER ? <Link href="/test-scheduler">Test Scheduler</Link> : null}
+              <Link href="/dashboard" className="nav-link">Dashboard</Link>
+              <Link href="/employees" className="nav-link">Employees</Link>
+              <Link href="/broadcasts" className="nav-link">Broadcasts</Link>
+              <Link href="/conversations" className="nav-link">Conversations</Link>
+              <Link href="/reports" className="nav-link">Reports</Link>
+              {env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER ? <Link href="/test-scheduler" className="nav-link">Test Scheduler</Link> : null}
             </>
           ) : (
-            <Link href="/login">Login</Link>
+            <Link href="/login" className="nav-link active">Login</Link>
           )}
         </nav>
       </header>
 
       <h1>WhatsApp Operations Control Center</h1>
-      <p>
-        Code-first platform for scheduling, reply capture, analytics, and leadership broadcasts.
-      </p>
+      <p>Code-first platform for scheduling, reply capture, analytics, and leadership broadcasts.</p>
 
       <section className="grid cards" style={{ marginTop: 16 }}>
         {allCards.map((card) => (
           <article className="card" key={card.title}>
-            <h2>{card.title}</h2>
+            <h3>{card.title}</h3>
             <p>{card.text}</p>
           </article>
         ))}

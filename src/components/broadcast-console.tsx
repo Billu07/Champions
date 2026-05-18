@@ -343,8 +343,8 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
   }
 
   return (
-    <section className="grid" style={{ gap: 14 }}>
-      <article className="panel status-banner">
+    <section className="grid broadcast-console" style={{ gap: 14 }}>
+      <article className="panel status-banner broadcast-status-banner">
         <div className="inline" style={{ justifyContent: "space-between", width: "100%" }}>
           <div className="inline">
             {busy ? <span className="status-spinner" aria-hidden="true" /> : null}
@@ -354,14 +354,14 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
         </div>
       </article>
 
-      <article className="card grid" style={{ gap: 14 }}>
+      <article className="card grid broadcast-station" style={{ gap: 14 }}>
         <div className="inline" style={{ justifyContent: "space-between" }}>
           <h2>CEO Broadcast Station</h2>
           <span className="pill">Template: {templateName}</span>
         </div>
 
-        <form className="grid" onSubmit={onPreview} style={{ gap: 14 }}>
-          <label className="grid" style={{ gap: 6 }}>
+        <form className="grid broadcast-form" onSubmit={onPreview} style={{ gap: 14 }}>
+          <label className="grid broadcast-draft" style={{ gap: 6 }}>
             <span className="muted" style={{ fontWeight: 700 }}>1. Draft Message</span>
             <textarea
               value={message}
@@ -372,15 +372,15 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
             />
           </label>
 
-          <article className="panel grid" style={{ gap: 10 }}>
-            <div className="inline" style={{ justifyContent: "space-between" }}>
+          <article className="panel grid broadcast-audience" style={{ gap: 10 }}>
+            <div className="inline broadcast-audience-head" style={{ justifyContent: "space-between" }}>
               <span className="muted" style={{ fontWeight: 700 }}>2. Choose Audience</span>
               <button type="submit" disabled={busy}>
                 {previewing ? "Generating..." : "Generate AI Preview"}
               </button>
             </div>
 
-            <div className="inline">
+            <div className="inline broadcast-target-modes">
               {targetModeOptions.map((option) => (
                 <button
                   key={option.value}
@@ -395,7 +395,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
             </div>
 
             {targetMode === "custom" ? (
-              <div className="grid" style={{ gap: 8 }}>
+              <div className="grid broadcast-custom-members" style={{ gap: 8 }}>
                 <div className="inline" style={{ justifyContent: "space-between" }}>
                   <strong>Custom Member Selection</strong>
                   <span className="muted">Selected: {selectedEmployeeIds.length}</span>
@@ -436,7 +436,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
                   <span className="muted">Showing: {filteredEmployees.length}</span>
                 </div>
 
-                <div className="table-wrap" style={{ maxHeight: 340, overflowY: "auto" }}>
+                <div className="table-wrap broadcast-custom-table" style={{ maxHeight: 340, overflowY: "auto" }}>
                   <table>
                     <thead>
                       <tr>
@@ -468,7 +468,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
                 </div>
               </div>
             ) : targetMode === "group" ? (
-              <div className="grid" style={{ gap: 8 }}>
+              <div className="grid broadcast-group-mode" style={{ gap: 8 }}>
                 <span>Group Category</span>
                 <div className="inline">
                   {groupAudienceOptions.map((option) => (
@@ -488,7 +488,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
                 </span>
               </div>
             ) : (
-              <div className="grid" style={{ gap: 8 }}>
+              <div className="grid broadcast-mixed-mode" style={{ gap: 8 }}>
                 <span className="muted">
                   AI-only targeting is active. Recipients will come from names/groups identified in the message.
                 </span>

@@ -361,8 +361,8 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
   }, [currentPage, filteredReports]);
 
   return (
-    <section className="grid" style={{ gap: 14 }}>
-      <article className="card grid" style={{ gap: 10 }}>
+    <section className="grid reports-board" style={{ gap: 14 }}>
+      <article className="card grid reports-filters" style={{ gap: 10 }}>
         <div className="row">
           <label className="col-3 grid" style={{ gap: 6 }}>
             <span>Type</span>
