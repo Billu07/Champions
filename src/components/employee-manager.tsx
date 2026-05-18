@@ -46,6 +46,8 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
   const [employees, setEmployees] = useState<Employee[]>(initialEmployees);
   const [tags, setTags] = useState<Tag[]>(initialTags);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
+  const [bulkTag, setBulkTag] = useState<string>("sales_field");
   const [form, setForm] = useState(defaultForm);
   const [editorOpen, setEditorOpen] = useState(false);
   const [filterTag, setFilterTag] = useState<string>("all");
@@ -54,15 +56,23 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [bulkSaving, setBulkSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [newTagKey, setNewTagKey] = useState("");
   const [newTagLabel, setNewTagLabel] = useState("");
   const editorRef = useRef<HTMLFormElement | null>(null);
 
   const editing = Boolean(form.id);
+  const effectiveBulkTag = bulkTag === "all" || tags.some((tag) => tag.key === bulkTag)
+    ? bulkTag
+    : (tags[0]?.key ?? "all");
 
   function parseTagSelection(select: HTMLSelectElement): string[] {
     return Array.from(select.selectedOptions).map((item) => item.value);
+  }
+
+  function dedupeIds(ids: string[]): string[] {
+    return Array.from(new Set(ids));
   }
 
   function openEditor(mode: "create" | "edit"): void {
@@ -95,7 +105,9 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
       return;
     }
 
-    setEmployees((employeeJson as { employees?: Employee[] }).employees ?? []);
+    const latestEmployees = (employeeJson as { employees?: Employee[] }).employees ?? [];
+    setEmployees(latestEmployees);
+    setSelectedEmployeeIds((prev) => prev.filter((id) => latestEmployees.some((employee) => employee.id === id)));
     setTags((tagJson as { tags?: Tag[] }).tags ?? []);
     setLoading(false);
   }
@@ -212,6 +224,66 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
     await load();
   }
 
+  function toggleEmployeeSelection(employeeId: string, checked: boolean): void {
+    setSelectedEmployeeIds((prev) =>
+      checked ? dedupeIds([...prev, employeeId]) : prev.filter((id) => id !== employeeId),
+    );
+  }
+
+  function selectFilteredEmployees(): void {
+    setSelectedEmployeeIds(dedupeIds(filteredEmployees.map((employee) => employee.id)));
+  }
+
+  function selectEmployeesByTag(tagKey: string): void {
+    if (tagKey === "all") {
+      setSelectedEmployeeIds(dedupeIds(employees.map((employee) => employee.id)));
+      return;
+    }
+    setSelectedEmployeeIds(
+      dedupeIds(
+        employees
+          .filter((employee) => employee.tags.some((tag) => tag.key === tagKey))
+          .map((employee) => employee.id),
+      ),
+    );
+  }
+
+  function clearSelectedEmployees(): void {
+    setSelectedEmployeeIds([]);
+  }
+
+  async function onBulkTrackingUpdate(trackingEnabled: boolean) {
+    const ids = dedupeIds(selectedEmployeeIds);
+    if (ids.length === 0) {
+      setMessage("Select at least one member for bulk tracking update.");
+      return;
+    }
+
+    setBulkSaving(true);
+    setMessage("");
+
+    const res = await fetch("/api/employees", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        employeeIds: ids,
+        trackingEnabled,
+      }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setMessage((json as { error?: string }).error ?? "Failed to update tracking settings.");
+      setBulkSaving(false);
+      return;
+    }
+
+    setMessage(`Tracking ${trackingEnabled ? "enabled" : "disabled"} for ${ids.length} member(s).`);
+    await load();
+    setSelectedEmployeeIds([]);
+    setBulkSaving(false);
+  }
+
   const filteredEmployees = useMemo(() => {
     const q = search.trim().toLowerCase();
 
@@ -290,6 +362,42 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
         </div>
 
         {message ? <p className="muted">{message}</p> : null}
+
+        <div className="row">
+          <label className="col-4 grid" style={{ gap: 6 }}>
+            <span>Bulk Tag</span>
+            <select value={effectiveBulkTag} onChange={(event) => setBulkTag(event.target.value)}>
+              <option value="all">All Members</option>
+              {tags.map((tag) => (
+                <option key={tag.key} value={tag.key}>
+                  {tag.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="col-8 grid" style={{ gap: 6 }}>
+            <span>Bulk Tracking Update</span>
+            <div className="inline" style={{ flexWrap: "wrap" }}>
+              <button type="button" className="ghost" onClick={() => selectEmployeesByTag(effectiveBulkTag)} disabled={bulkSaving}>
+                Select Tag Members
+              </button>
+              <button type="button" className="ghost" onClick={() => selectFilteredEmployees()} disabled={bulkSaving}>
+                Select Filtered
+              </button>
+              <button type="button" className="ghost" onClick={() => clearSelectedEmployees()} disabled={bulkSaving}>
+                Clear Selection
+              </button>
+              <button type="button" onClick={() => void onBulkTrackingUpdate(true)} disabled={bulkSaving}>
+                {bulkSaving ? "Updating..." : "Enable Tracking"}
+              </button>
+              <button type="button" className="danger" onClick={() => void onBulkTrackingUpdate(false)} disabled={bulkSaving}>
+                {bulkSaving ? "Updating..." : "Disable Tracking"}
+              </button>
+              <span className="muted">Selected: {selectedEmployeeIds.length}</span>
+            </div>
+          </div>
+        </div>
       </article>
 
       {editorOpen ? (
@@ -511,6 +619,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
           <table>
             <thead>
               <tr>
+                <th style={{ width: 72 }}>Select</th>
                 <th>Name</th>
                 <th>WhatsApp</th>
                 <th>Designation</th>
@@ -524,6 +633,13 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
             <tbody>
               {filteredEmployees.length ? filteredEmployees.map((employee) => (
                 <tr key={employee.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selectedEmployeeIds.includes(employee.id)}
+                      onChange={(event) => toggleEmployeeSelection(employee.id, event.target.checked)}
+                    />
+                  </td>
                   <td>{employee.full_name}</td>
                   <td>{employee.whatsapp_e164}</td>
                   <td>{employee.designation || "-"}</td>
@@ -544,7 +660,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={8}>No employees match current filters.</td>
+                  <td colSpan={9}>No employees match current filters.</td>
                 </tr>
               )}
             </tbody>

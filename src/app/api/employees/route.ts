@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { fail, ok } from "@/lib/http";
 import { requestHasAdminSession } from "@/lib/auth";
-import { deleteEmployee, listEmployees, upsertEmployee } from "@/lib/repository";
+import { deleteEmployee, listEmployees, updateEmployeesTrackingBulk, upsertEmployee } from "@/lib/repository";
 
 const employeeSchema = z.object({
   id: z.string().uuid().optional(),
@@ -16,6 +16,11 @@ const employeeSchema = z.object({
   aliases: z.array(z.string()).default([]),
   notes: z.string().optional(),
   tagKeys: z.array(z.string()).default([]),
+});
+
+const bulkTrackingSchema = z.object({
+  employeeIds: z.array(z.string().uuid()).min(1).max(1000),
+  trackingEnabled: z.boolean(),
 });
 
 export async function GET(request: Request) {
@@ -56,4 +61,19 @@ export async function DELETE(request: Request) {
 
   await deleteEmployee(parsedId.data);
   return ok({ deleted: true });
+}
+
+export async function PATCH(request: Request) {
+  if (!(await requestHasAdminSession(request))) {
+    return fail("Unauthorized", 401);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const parsed = bulkTrackingSchema.safeParse(body);
+  if (!parsed.success) {
+    return fail(parsed.error.issues[0]?.message ?? "Invalid payload", 400);
+  }
+
+  const result = await updateEmployeesTrackingBulk(parsed.data);
+  return ok({ updated: result.updated });
 }

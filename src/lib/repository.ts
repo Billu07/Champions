@@ -370,6 +370,32 @@ export async function deleteEmployee(employeeId: string) {
   ensureNoError(res.error, "Failed to delete employee");
 }
 
+export async function updateEmployeesTrackingBulk(input: {
+  employeeIds: string[];
+  trackingEnabled: boolean;
+}) {
+  const ids = Array.from(new Set(input.employeeIds.map((id) => id.trim()).filter(Boolean)));
+  if (ids.length === 0) return { updated: 0 };
+
+  const schema = await getEmployeesSchemaMode();
+
+  if (schema === "modern") {
+    const res = await supabaseAdmin
+      .from("employees")
+      .update({ tracking_enabled: input.trackingEnabled })
+      .in("id", ids);
+    ensureNoError(res.error, "Failed to bulk update tracking");
+    return { updated: ids.length };
+  }
+
+  const res = await supabaseAdmin
+    .from("employees")
+    .update({ is_active_for_tracking: input.trackingEnabled })
+    .in("id", ids);
+  ensureNoError(res.error, "Failed to bulk update tracking");
+  return { updated: ids.length };
+}
+
 export async function getTrackedEmployees(): Promise<EmployeeRow[]> {
   if (!(await hasTagTables())) {
     return fetchEmployees({
