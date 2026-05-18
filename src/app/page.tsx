@@ -48,17 +48,13 @@ export default async function HomePage() {
           <span className="brand-badge brand-logo-wrap" aria-hidden="true">
             <Image
               src="/brand/logo-c.png"
-              alt=""
+              alt="Champions Family"
               width={303}
               height={120}
               priority
               className="brand-logo"
             />
           </span>
-          <div className="brand-copy">
-            <span className="brand-title">Champions Family</span>
-            <span className="brand-subtitle">Ops Console</span>
-          </div>
         </div>
 
         <nav className="nav">

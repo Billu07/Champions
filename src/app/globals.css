@@ -47,9 +47,9 @@ a {
 }
 
 .page {
-  max-width: 1480px;
+  max-width: 1320px;
   margin: 0 auto;
-  padding: 28px clamp(16px, 2.5vw, 32px) 40px;
+  padding: 30px clamp(22px, 4vw, 58px) 42px;
 }
 
 .topbar {
@@ -61,14 +61,14 @@ a {
   margin-right: calc(50% - 50vw);
   margin-top: -28px;
   margin-bottom: 30px;
-  padding: 10px clamp(16px, 3vw, 34px);
+  padding: 10px clamp(20px, 4vw, 54px);
   border-bottom: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: 14px;
 }
 
 .brand {
@@ -78,31 +78,26 @@ a {
 .brand-shell {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
+  flex: 0 0 auto;
 }
 
 .brand-badge {
-  width: 136px;
-  height: 52px;
-  border-radius: 13px;
-  background: linear-gradient(135deg, var(--primary-soft) 0%, var(--secondary-soft) 100%);
-  color: #ffffff;
-  display: grid;
-  place-items: center;
-  box-shadow: 0 10px 24px rgba(16, 128, 64, 0.16);
-  border: 1px solid #c8dfc5;
+  width: 170px;
+  display: block;
   flex: 0 0 auto;
 }
 
 .brand-logo-wrap {
-  overflow: hidden;
-  padding-inline: 8px;
+  overflow: visible;
+  padding: 0;
 }
 
 .brand-logo {
   width: 100%;
   height: auto;
+  display: block;
   object-fit: contain;
   filter: saturate(1.03);
 }
@@ -145,13 +140,13 @@ a {
   position: relative;
   border: 1px solid transparent;
   border-radius: 12px;
-  padding: 10px 13px;
+  padding: 9px 12px;
   background: transparent;
   color: #2e3a31;
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 500;
   white-space: nowrap;
   transition: color 140ms ease, background-color 140ms ease;
@@ -194,7 +189,8 @@ a {
   gap: 8px;
   border-radius: 12px;
   padding-inline: 16px;
-  height: 44px;
+  height: 40px;
+  font-size: 14px;
 }
 
 .grid {
@@ -216,7 +212,7 @@ a {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 16px;
-  padding: 16px;
+  padding: 14px;
   box-shadow: var(--shadow-sm);
 }
 
@@ -224,12 +220,12 @@ a {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--panel-soft);
-  padding: 14px;
+  padding: 12px;
 }
 
 .page > h1 {
   margin: 0;
-  font-size: clamp(34px, 4vw, 64px);
+  font-size: clamp(30px, 3.2vw, 50px);
   line-height: 1.05;
   color: #175c31;
   letter-spacing: -0.01em;
@@ -237,9 +233,9 @@ a {
 
 .page > h1 + p {
   margin: 14px 0 0;
-  font-size: clamp(18px, 2vw, 23px);
+  font-size: clamp(16px, 1.4vw, 20px);
   color: #5a677b;
-  max-width: 1080px;
+  max-width: 920px;
 }
 
 .page > h1 + p + .kpi-grid,
@@ -251,7 +247,7 @@ a {
 
 .status-banner {
   position: sticky;
-  top: 80px;
+  top: 74px;
   z-index: 40;
   box-shadow: 0 12px 30px rgba(16, 45, 86, 0.14);
   border-radius: 14px;
@@ -509,7 +505,7 @@ a {
 .kpi-label {
   margin: 0;
   color: #3f536e;
-  font-size: 13px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.45px;
   font-weight: 700;
@@ -517,7 +513,7 @@ a {
 
 .kpi-value {
   margin: 0;
-  font-size: clamp(36px, 3vw, 56px);
+  font-size: clamp(30px, 2.2vw, 44px);
   line-height: 1;
   font-weight: 800;
   color: #1b6636;
@@ -526,7 +522,7 @@ a {
 .kpi-sub {
   margin: 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 h1,
@@ -536,13 +532,13 @@ h3 {
 }
 
 h2 {
-  font-size: clamp(21px, 1.8vw, 30px);
+  font-size: clamp(19px, 1.5vw, 26px);
   line-height: 1.15;
   color: #22492f;
 }
 
 h3 {
-  font-size: 20px;
+  font-size: 17px;
   color: #284d34;
 }
 
@@ -567,10 +563,10 @@ table {
 
 th,
 td {
-  padding: 12px 12px;
+  padding: 10px 10px;
   border-bottom: 1px solid #e3e9f1;
   text-align: left;
-  font-size: 14px;
+  font-size: 13px;
   vertical-align: top;
 }
 
@@ -604,7 +600,7 @@ select {
   border: 1px solid var(--border-strong);
   border-radius: 12px;
   background: #ffffff;
-  padding: 11px 12px;
+  padding: 9px 11px;
   transition: box-shadow 120ms ease, border-color 120ms ease, background-color 120ms ease;
 }
 
@@ -625,10 +621,11 @@ button,
 .button {
   border: 1px solid transparent;
   border-radius: 12px;
-  padding: 10px 14px;
+  padding: 9px 12px;
   background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
   color: #fff;
   font-weight: 600;
+  font-size: 14px;
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
@@ -683,7 +680,7 @@ input[type="checkbox"] {
 .row {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .col-6 {
@@ -822,7 +819,7 @@ details summary {
 
 .login-card > h1 {
   margin: 0;
-  font-size: clamp(34px, 5vw, 44px);
+  font-size: clamp(30px, 4vw, 40px);
   line-height: 1.05;
   color: #165a31;
 }
@@ -843,7 +840,7 @@ details summary {
 }
 
 .dashboard-panels {
-  gap: 14px;
+  gap: 12px;
 }
 
 .dashboard-campaigns .table-wrap,
@@ -863,6 +860,60 @@ details summary {
 .test-scheduler-create,
 .test-scheduler-queue {
   box-shadow: var(--shadow-sm);
+}
+
+.employee-actions {
+  padding: 14px;
+  gap: 8px;
+}
+
+.employee-actions-head {
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.employee-actions-primary {
+  gap: 8px;
+}
+
+.employee-actions-primary > button {
+  min-height: 36px;
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+.employee-actions-grid {
+  gap: 10px;
+  align-items: end;
+}
+
+.employee-bulk-tag select {
+  min-height: 36px;
+  padding-block: 7px;
+}
+
+.employee-bulk-tools > span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.employee-bulk-controls {
+  gap: 7px;
+}
+
+.employee-bulk-controls > button {
+  min-height: 36px;
+  padding: 7px 11px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+
+.employee-selected-count {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #245336;
 }
 
 .employee-manager label > span,
@@ -1003,18 +1054,18 @@ details summary {
   }
 
   .brand-title {
-    font-size: 18px;
+    font-size: 16px;
   }
 
   .nav-link {
-    font-size: 15px;
-    padding: 10px 11px;
+    font-size: 14px;
+    padding: 9px 10px;
   }
 }
 
 @media (max-width: 920px) {
   .page {
-    padding: 18px 14px 30px;
+    padding: 20px 16px 30px;
   }
 
   .topbar {
@@ -1028,13 +1079,11 @@ details summary {
   }
 
   .brand-badge {
-    width: 112px;
-    height: 42px;
-    border-radius: 11px;
+    width: 142px;
   }
 
   .brand-logo-wrap {
-    padding-inline: 6px;
+    padding: 0;
   }
 
   .brand-subtitle {
@@ -1080,7 +1129,18 @@ details summary {
   }
 
   .status-banner {
-    top: 70px;
+    top: 66px;
+  }
+
+  .employee-bulk-controls {
+    width: 100%;
+  }
+
+  .employee-selected-count {
+    margin-left: 0;
+    width: 100%;
+    padding-left: 0;
+    padding-top: 4px;
   }
 }
 
@@ -1090,12 +1150,11 @@ details summary {
   }
 
   .brand-badge {
-    width: 96px;
-    height: 38px;
+    width: 126px;
   }
 
   .brand-logo-wrap {
-    padding-inline: 5px;
+    padding: 0;
   }
 
   .logout-btn {
@@ -1114,10 +1173,10 @@ details summary {
   }
 
   .page > h1 {
-    font-size: 34px;
+    font-size: 30px;
   }
 
   .page > h1 + p {
-    font-size: 17px;
+    font-size: 16px;
   }
 }

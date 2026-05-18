@@ -349,9 +349,9 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
       </div>
 
       <article className="card grid employee-actions" style={{ gap: 10 }}>
-        <div className="inline" style={{ justifyContent: "space-between" }}>
+        <div className="inline employee-actions-head" style={{ justifyContent: "space-between" }}>
           <h2>Member Actions</h2>
-          <div className="inline">
+          <div className="inline employee-actions-primary">
             <button type="button" onClick={() => openEditor("create")}>
               Add Member
             </button>
@@ -363,8 +363,8 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
 
         {message ? <p className="muted">{message}</p> : null}
 
-        <div className="row">
-          <label className="col-4 grid" style={{ gap: 6 }}>
+        <div className="row employee-actions-grid">
+          <label className="col-3 grid employee-bulk-tag" style={{ gap: 6 }}>
             <span>Bulk Tag</span>
             <select value={effectiveBulkTag} onChange={(event) => setBulkTag(event.target.value)}>
               <option value="all">All Members</option>
@@ -376,9 +376,9 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
             </select>
           </label>
 
-          <div className="col-8 grid" style={{ gap: 6 }}>
+          <div className="col-9 grid employee-bulk-tools" style={{ gap: 6 }}>
             <span>Bulk Tracking Update</span>
-            <div className="inline" style={{ flexWrap: "wrap" }}>
+            <div className="inline employee-bulk-controls" style={{ flexWrap: "wrap" }}>
               <button type="button" className="ghost" onClick={() => selectEmployeesByTag(effectiveBulkTag)} disabled={bulkSaving}>
                 Select Tag Members
               </button>
@@ -388,13 +388,13 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
               <button type="button" className="ghost" onClick={() => clearSelectedEmployees()} disabled={bulkSaving}>
                 Clear Selection
               </button>
-              <button type="button" onClick={() => void onBulkTrackingUpdate(true)} disabled={bulkSaving}>
+              <button type="button" className="employee-bulk-enable" onClick={() => void onBulkTrackingUpdate(true)} disabled={bulkSaving}>
                 {bulkSaving ? "Updating..." : "Enable Tracking"}
               </button>
-              <button type="button" className="danger" onClick={() => void onBulkTrackingUpdate(false)} disabled={bulkSaving}>
+              <button type="button" className="danger employee-bulk-disable" onClick={() => void onBulkTrackingUpdate(false)} disabled={bulkSaving}>
                 {bulkSaving ? "Updating..." : "Disable Tracking"}
               </button>
-              <span className="muted">Selected: {selectedEmployeeIds.length}</span>
+              <span className="muted employee-selected-count">Selected: {selectedEmployeeIds.length}</span>
             </div>
           </div>
         </div>
