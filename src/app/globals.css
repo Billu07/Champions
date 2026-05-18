@@ -864,7 +864,7 @@ details summary {
 
 .employee-actions {
   padding: 14px;
-  gap: 8px;
+  gap: 10px;
 }
 
 .employee-actions-head {
@@ -882,23 +882,35 @@ details summary {
   font-size: 13px;
 }
 
-.employee-actions-grid {
+.employee-actions-toolbar {
+  display: flex;
+  align-items: flex-end;
   gap: 10px;
-  align-items: end;
+  flex-wrap: wrap;
 }
 
-.employee-bulk-tag select {
+.employee-bulk-tag-inline {
+  display: grid;
+  gap: 5px;
+  min-width: 220px;
+  max-width: 280px;
+}
+
+.employee-bulk-tag-inline > span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #2a4a35;
+}
+
+.employee-bulk-tag-inline select {
   min-height: 36px;
   padding-block: 7px;
 }
 
-.employee-bulk-tools > span {
-  font-size: 13px;
-  font-weight: 700;
-}
-
 .employee-bulk-controls {
   gap: 7px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .employee-bulk-controls > button {
@@ -908,12 +920,16 @@ details summary {
   border-radius: 10px;
 }
 
-.employee-selected-count {
+.employee-bulk-controls-cta {
   margin-left: auto;
-  padding-left: 8px;
+}
+
+.employee-selected-count {
+  margin-left: 8px;
   font-size: 13px;
   font-weight: 700;
   color: #245336;
+  align-self: center;
 }
 
 .employee-manager label > span,
@@ -1132,15 +1148,29 @@ details summary {
     top: 66px;
   }
 
+  .employee-actions-toolbar {
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .employee-bulk-tag-inline {
+    width: 100%;
+    max-width: none;
+  }
+
   .employee-bulk-controls {
     width: 100%;
+  }
+
+  .employee-bulk-controls-cta {
+    margin-left: 0;
+    justify-content: flex-start;
   }
 
   .employee-selected-count {
     margin-left: 0;
     width: 100%;
-    padding-left: 0;
-    padding-top: 4px;
+    align-self: auto;
   }
 }
 
