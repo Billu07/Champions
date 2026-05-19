@@ -130,10 +130,11 @@ a {
 .nav {
   display: flex;
   align-items: center;
-  gap: 2px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  padding-bottom: 2px;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+  overflow: visible;
+  padding-bottom: 0;
 }
 
 .nav-link {
@@ -1109,7 +1110,9 @@ details summary {
   .nav {
     width: 100%;
     order: 2;
-    padding-bottom: 4px;
+    justify-content: flex-start;
+    gap: 6px;
+    padding-bottom: 0;
   }
 
   .logout-form {
