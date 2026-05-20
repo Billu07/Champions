@@ -65,6 +65,10 @@ export type BroadcastPreviewRequest = {
   selectedEmployeeIds?: string[];
   selectedTagKeys?: string[];
   useAiRouting?: boolean;
+  previousDraft?: string;
+  aiRegenerateInstruction?: string;
+  preferInstructionMode?: boolean;
+  lockToSelectedRecipients?: boolean;
 };
 
 export type BroadcastPreviewRoute = {

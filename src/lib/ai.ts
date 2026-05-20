@@ -41,6 +41,23 @@ type AiRoutesResult = {
   meta: AiFallbackMeta;
 };
 
+export type AiBroadcastDraftMode = "rewrite" | "compose" | "regenerate";
+
+type AiBroadcastDraftInput = {
+  message: string;
+  audienceHint?: string;
+  previousDraft?: string;
+  aiRegenerateInstruction?: string;
+  preferInstructionMode?: boolean;
+};
+
+type AiBroadcastDraftResult = {
+  text: string;
+  mode: AiBroadcastDraftMode;
+  detectedInstruction: boolean;
+  meta: AiFallbackMeta;
+};
+
 function errorMessage(error: unknown): string {
   const message = (error as Error)?.message ?? "Unknown AI error";
   return message.trim() || "Unknown AI error";
@@ -119,6 +136,147 @@ export async function enhanceCeoMessageWithMeta(input: string): Promise<AiTextRe
     logError("AI enhancement fallback", { reason });
     return {
       text: input.trim(),
+      meta: { usedFallback: true, error: reason },
+    };
+  }
+}
+
+function detectInstructionStyle(input: string): boolean {
+  const value = input.trim().toLowerCase();
+  if (!value) return false;
+
+  const instructionHints = [
+    /\b(write|draft|compose|format|prepare|generate|create|make)\b/,
+    /\b(message|broadcast|announcement|note|text)\b/,
+    /\b(i want|we want|can you|please)\b/,
+    /\bmotivat(?:e|ional)\b/,
+    /\bekta\s+(message|msg|note)\b/,
+    /\b(barta|message)\s+(dite|likhte|toiri|korte)\s+chai\b/,
+    /\b(bolte|janate)\s+chai\b/,
+    /\bmotivation(?:al)?\b/,
+    /\bami\b.*\bchai\b/,
+  ];
+
+  const hits = instructionHints.reduce((count, pattern) => (pattern.test(value) ? count + 1 : count), 0);
+  return hits >= 2;
+}
+
+function prefersEnglish(input: string): boolean {
+  const value = input.toLowerCase();
+  return /\b(english|in english|use english)\b/.test(value);
+}
+
+function composePrompt(input: {
+  message: string;
+  audienceHint: string;
+  outputLanguage: "bn" | "en";
+}): string {
+  const languageLine = input.outputLanguage === "en"
+    ? "Output language: English."
+    : "Output language: Bengali (Bangla script).";
+
+  return [
+    "You are a WhatsApp broadcast copy assistant for a CEO.",
+    "Turn the CEO instruction into one final send-ready WhatsApp message.",
+    languageLine,
+    "Rules:",
+    "- Keep it simple, natural, and practical.",
+    "- Use short, direct sentences.",
+    "- Do not add fake numbers, promises, or deadlines that were not requested.",
+    "- Keep tone human and conversational, not corporate.",
+    "- Length target: 2 to 5 short lines.",
+    "- Return only the final message text.",
+    input.audienceHint ? `Audience hint: ${input.audienceHint}` : "Audience hint: not specified",
+    "",
+    `CEO instruction:\n${input.message}`,
+  ].join("\n");
+}
+
+function regeneratePrompt(input: {
+  previousDraft: string;
+  aiRegenerateInstruction: string;
+  audienceHint: string;
+  outputLanguage: "bn" | "en";
+}): string {
+  const languageLine = input.outputLanguage === "en"
+    ? "Output language: English."
+    : "Output language: Bengali (Bangla script).";
+
+  return [
+    "You are a WhatsApp broadcast copy assistant for a CEO.",
+    "Revise the existing drafted message using the CEO's new instruction.",
+    languageLine,
+    "Rules:",
+    "- Keep the intent consistent with both the current draft and new instruction.",
+    "- Keep wording simple and natural.",
+    "- Keep output concise (2 to 5 short lines).",
+    "- Return only the revised final message text.",
+    input.audienceHint ? `Audience hint: ${input.audienceHint}` : "Audience hint: not specified",
+    "",
+    `Current draft:\n${input.previousDraft}`,
+    "",
+    `CEO reinstruction:\n${input.aiRegenerateInstruction}`,
+  ].join("\n");
+}
+
+export async function buildCeoBroadcastDraftWithMeta(input: AiBroadcastDraftInput): Promise<AiBroadcastDraftResult> {
+  const message = input.message.trim();
+  const previousDraft = input.previousDraft?.trim() ?? "";
+  const aiRegenerateInstruction = input.aiRegenerateInstruction?.trim() ?? "";
+  const detectedInstruction = detectInstructionStyle(message);
+  const shouldRegenerate = Boolean(aiRegenerateInstruction);
+  const shouldCompose = shouldRegenerate || Boolean(input.preferInstructionMode) || detectedInstruction;
+  const outputLanguage: "bn" | "en" = prefersEnglish(`${message}\n${aiRegenerateInstruction}`) ? "en" : "bn";
+  const audienceHint = input.audienceHint?.trim() ?? "";
+
+  if (!shouldCompose) {
+    const rewritten = await enhanceCeoMessageWithMeta(message);
+    return {
+      text: rewritten.text,
+      mode: "rewrite",
+      detectedInstruction: false,
+      meta: rewritten.meta,
+    };
+  }
+
+  const fallbackText = shouldRegenerate ? (previousDraft || message) : message;
+  const mode: AiBroadcastDraftMode = shouldRegenerate ? "regenerate" : "compose";
+  const prompt = shouldRegenerate
+    ? regeneratePrompt({
+        previousDraft: previousDraft || message,
+        aiRegenerateInstruction,
+        audienceHint,
+        outputLanguage,
+      })
+    : composePrompt({
+        message,
+        audienceHint,
+        outputLanguage,
+      });
+
+  try {
+    const output = await runGemini(prompt, false);
+    const text = output || fallbackText;
+    const meta: AiFallbackMeta = {
+      usedFallback: !output,
+      error: output ? null : "Gemini returned an empty response",
+    };
+    if (meta.usedFallback) {
+      logError("AI compose fallback", { reason: meta.error, mode });
+    }
+    return {
+      text,
+      mode,
+      detectedInstruction,
+      meta,
+    };
+  } catch (error) {
+    const reason = errorMessage(error);
+    logError("AI compose fallback", { reason, mode });
+    return {
+      text: fallbackText,
+      mode,
+      detectedInstruction,
       meta: { usedFallback: true, error: reason },
     };
   }
@@ -213,13 +371,15 @@ export async function extractInstructionRoutesWithMeta(message: string): Promise
     "Extract one or more targeted routes from the message.",
     "Valid group targets: sales_team, head_office, drivers, customers, all.",
     "Use targetType=person when a specific person is named.",
-    "Write each route.message in very simple, natural Bengali (Bangla script).",
+    "Write each route.message as final send-ready WhatsApp text in very simple, natural Bengali (Bangla script).",
     "Do not add extra meaning; keep the instruction intent exactly the same.",
     "If input explicitly asks for English, keep English.",
     "Return strict JSON only with this shape:",
     "{\"routes\":[{\"targetType\":\"person|group\",\"target\":\"string\",\"message\":\"string\",\"confidence\":0.0}]}",
     "Rules:",
     "- Keep each route message concise and specific to only that target.",
+    "- If the input is high-level (e.g. motivational message request), generate a practical message draft for that target.",
+    "- Keep route.message short (1 to 4 lines) and ready to send as-is.",
     "- If a route does not map to a valid group target, keep it as targetType=person.",
     "- Confidence must be between 0 and 1.",
     `Message:\n${message}`,
@@ -282,3 +442,4 @@ export async function summarizeReport(
 
   return runGemini(prompt, false);
 }
+

@@ -12,6 +12,10 @@ const schema = z.object({
   selectedEmployeeIds: z.array(z.string().uuid()).default([]),
   selectedTagKeys: z.array(z.string()).default([]),
   useAiRouting: z.boolean().default(true),
+  previousDraft: z.string().optional().default(""),
+  aiRegenerateInstruction: z.string().optional().default(""),
+  preferInstructionMode: z.boolean().optional().default(false),
+  lockToSelectedRecipients: z.boolean().optional().default(false),
 });
 
 export async function POST(request: Request) {
@@ -36,6 +40,10 @@ export async function POST(request: Request) {
         selectedEmployeeIds: parsed.data.selectedEmployeeIds,
         selectedTagKeys: parsed.data.selectedTagKeys,
         useAiRouting: parsed.data.useAiRouting,
+        previousDraft: parsed.data.previousDraft,
+        aiRegenerateInstruction: parsed.data.aiRegenerateInstruction,
+        preferInstructionMode: parsed.data.preferInstructionMode,
+        lockToSelectedRecipients: parsed.data.lockToSelectedRecipients,
       },
       allEmployees,
     );

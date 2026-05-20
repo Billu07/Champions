@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { enhanceCeoMessageWithMeta, extractInstructionRoutesWithMeta } from "@/lib/ai";
+import { buildCeoBroadcastDraftWithMeta, extractInstructionRoutesWithMeta } from "@/lib/ai";
 import type { AiInstructionRoute } from "@/lib/ai";
 import { resolveMentions, resolvePersonNameTarget } from "@/lib/mention";
 import type {
@@ -28,6 +28,10 @@ type BuildPreviewInput = {
   selectedEmployeeIds: string[];
   selectedTagKeys: string[];
   useAiRouting: boolean;
+  previousDraft?: string;
+  aiRegenerateInstruction?: string;
+  preferInstructionMode?: boolean;
+  lockToSelectedRecipients?: boolean;
 };
 
 type RouteFlags = {
@@ -59,6 +63,8 @@ export type BroadcastPreviewBuildResult = {
     messageRewrite: {
       usedFallback: boolean;
       error: string | null;
+      mode: "rewrite" | "compose" | "regenerate";
+      detectedInstruction: boolean;
     };
   };
 };
@@ -156,8 +162,13 @@ export async function buildBroadcastPreview(
     .filter((employee) => employeeHasAnyTag(employee, input.selectedTagKeys))
     .map((employee) => employee.id);
   const categoryIds = recipientsFromCategory(input.audienceCategory, activeEmployees);
+  const lockedRecipientSet = input.lockToSelectedRecipients ? new Set(selectedIds) : null;
+  const applyRecipientLock = (ids: string[]) =>
+    lockedRecipientSet ? ids.filter((id) => lockedRecipientSet.has(id)) : ids;
 
-  const baseRecipientIds = dedupeIds([...selectedIds, ...tagIds, ...categoryIds]);
+  const baseRecipientIds = input.lockToSelectedRecipients
+    ? selectedIds
+    : dedupeIds([...selectedIds, ...tagIds, ...categoryIds]);
 
   const aiRouteResult = input.useAiRouting
     ? await extractInstructionRoutesWithMeta(input.message)
@@ -170,7 +181,7 @@ export async function buildBroadcastPreview(
   const mentionResult = await resolveMentions(input.message, activeEmployees, {
     useAiExtraction: mentionAiEnabled,
   });
-  const mentionIds = dedupeIds(mentionResult.matches.map((match) => match.employeeId));
+  const mentionIds = dedupeIds(applyRecipientLock(mentionResult.matches.map((match) => match.employeeId)));
 
   const previewRoutes: BroadcastPreviewRoute[] = [];
   const unresolvedAiTargets: string[] = [];
@@ -186,11 +197,12 @@ export async function buildBroadcastPreview(
             .map((employee) => employee.id);
 
       const ids = dedupeIds(recipients);
+      const lockedIds = dedupeIds(applyRecipientLock(ids));
       if (ids.length === 0) {
         unresolvedAiTargets.push(route.target);
       }
 
-      for (const id of ids) coveredByAi.add(id);
+      for (const id of lockedIds) coveredByAi.add(id);
 
       previewRoutes.push(
         makeRoute({
@@ -199,7 +211,7 @@ export async function buildBroadcastPreview(
           targetLabel: category ? audienceLabel(category) : route.target,
           source: "ai_group",
           confidence: route.confidence,
-          recipientEmployeeIds: ids,
+          recipientEmployeeIds: lockedIds,
           unresolvedTargets: ids.length > 0 ? [] : [route.target],
         }),
       );
@@ -208,11 +220,12 @@ export async function buildBroadcastPreview(
 
     const match = resolvePersonNameTarget(route.target, activeEmployees);
     const ids = match ? [match.employeeId] : [];
+    const lockedIds = dedupeIds(applyRecipientLock(ids));
     if (ids.length === 0) {
       unresolvedAiTargets.push(route.target);
     }
 
-    for (const id of ids) coveredByAi.add(id);
+    for (const id of lockedIds) coveredByAi.add(id);
 
     previewRoutes.push(
       makeRoute({
@@ -221,7 +234,7 @@ export async function buildBroadcastPreview(
         targetLabel: match?.fullName ?? route.target,
         source: "ai_person",
         confidence: route.confidence,
-        recipientEmployeeIds: ids,
+        recipientEmployeeIds: lockedIds,
         unresolvedTargets: ids.length > 0 ? [] : [route.target],
       }),
     );
@@ -255,15 +268,33 @@ export async function buildBroadcastPreview(
   }
 
   const recipients = dedupeIds(previewRoutes.flatMap((route) => route.recipientEmployeeIds));
-  const enhancedResult = isQuotaError(aiRouteResult.meta.error)
+  const audienceHint = input.audienceCategory === "custom"
+    ? (recipients.length > 0 ? `Custom recipients (${recipients.length})` : "Custom recipients from AI targeting")
+    : audienceLabel(input.audienceCategory);
+  const draftResult = isQuotaError(aiRouteResult.meta.error)
     ? {
-        text: input.message.trim(),
+        text: input.aiRegenerateInstruction?.trim() ? (input.previousDraft?.trim() || input.message.trim()) : input.message.trim(),
+        mode: input.aiRegenerateInstruction?.trim() ? "regenerate" as const : "rewrite" as const,
+        detectedInstruction: Boolean(input.preferInstructionMode),
         meta: {
           usedFallback: true,
-          error: "Skipped rewrite because AI quota is currently exceeded",
+          error: "Skipped message drafting because AI quota is currently exceeded",
         },
       }
-    : await enhanceCeoMessageWithMeta(input.message);
+    : await buildCeoBroadcastDraftWithMeta({
+        message: input.message,
+        audienceHint,
+        previousDraft: input.previousDraft,
+        aiRegenerateInstruction: input.aiRegenerateInstruction,
+        preferInstructionMode: input.preferInstructionMode,
+      });
+
+  const finalMessageForFallbackRoutes = draftResult.text.trim() || input.message.trim();
+
+  for (const route of previewRoutes) {
+    if (route.source === "ai_group" || route.source === "ai_person") continue;
+    route.instruction = finalMessageForFallbackRoutes;
+  }
 
   return {
     routes: previewRoutes,
@@ -272,7 +303,7 @@ export async function buildBroadcastPreview(
     mentionMatches: mentionResult.matches,
     unresolvedMentions: mentionResult.unresolved,
     unresolvedAiTargets: dedupeIds(unresolvedAiTargets),
-    enhancedMessage: enhancedResult.text,
+    enhancedMessage: draftResult.text,
     aiDiagnostics: {
       routeExtraction: {
         usedFallback: aiRouteResult.meta.usedFallback,
@@ -285,8 +316,10 @@ export async function buildBroadcastPreview(
         enabled: mentionAiEnabled,
       },
       messageRewrite: {
-        usedFallback: enhancedResult.meta.usedFallback,
-        error: enhancedResult.meta.error,
+        usedFallback: draftResult.meta.usedFallback,
+        error: draftResult.meta.error,
+        mode: draftResult.mode,
+        detectedInstruction: draftResult.detectedInstruction,
       },
     },
   };

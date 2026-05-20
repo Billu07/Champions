@@ -990,6 +990,10 @@ details summary {
   border-color: #cadaca;
 }
 
+.broadcast-group-table {
+  border-color: #cadaca;
+}
+
 .broadcast-mixed-mode,
 .broadcast-group-mode {
   border: 1px solid #cbdebe;
