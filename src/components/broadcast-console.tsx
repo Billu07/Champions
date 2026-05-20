@@ -88,6 +88,64 @@ function dedupe(values: string[]): string[] {
   return Array.from(new Set(values));
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function stripLeadingTargetName(value: string, targetLabel: string): string {
+  const name = targetLabel.trim();
+  if (!name) return value.trim();
+  const pattern = new RegExp(
+    `^${escapeRegExp(name)}(?:\\s*(?:,|:|;|\\.|!|\\?|\\-|\\u2013|\\u2014|\\u0964)\\s*|\\s+)`,
+    "iu",
+  );
+  const cleaned = value.trim().replace(pattern, "").trim();
+  return cleaned || value.trim();
+}
+
+function routeMessageForEditor(route: BroadcastPreviewRoute): string {
+  const message = route.instruction.trim();
+  if (!message) return "";
+  if (route.source === "ai_person") {
+    return stripLeadingTargetName(message, route.targetLabel);
+  }
+  return message;
+}
+
+function deriveEditorMessageFromPreview(
+  preview: PreviewResponse,
+  fallbackMessage: string,
+  targetMode: TargetMode,
+): string {
+  const activeRoutes = preview.routes.filter((route) => route.recipientEmployeeIds.length > 0);
+  if (activeRoutes.length === 0) {
+    return (preview.enhancedMessage || fallbackMessage).trim();
+  }
+
+  const routeMessages = activeRoutes
+    .map((route) => routeMessageForEditor(route))
+    .filter(Boolean);
+
+  if (routeMessages.length === 0) {
+    return (preview.enhancedMessage || fallbackMessage).trim();
+  }
+
+  const normalizedUnique = Array.from(new Set(routeMessages.map((item) => collapseWhitespace(item))));
+  if (normalizedUnique.length === 1) {
+    return routeMessages[0];
+  }
+
+  if (targetMode === "group" || targetMode === "custom") {
+    return routeMessages[0];
+  }
+
+  return (preview.enhancedMessage || fallbackMessage).trim();
+}
+
 function employeeMatchesQuery(employee: Employee, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
@@ -381,7 +439,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       const parsed = json as PreviewResponse;
       setPreview(parsed);
       setPreviewAudienceCategory(payload.audienceCategory);
-      setReviewedMessage((parsed.enhancedMessage || trimmedMessage).trim());
+      setReviewedMessage(deriveEditorMessageFromPreview(parsed, trimmedMessage, targetMode));
       setPreviewGeneratedAt(new Date().toLocaleString());
       setPreviewModalOpen(true);
       setRegenerateInstruction("");
