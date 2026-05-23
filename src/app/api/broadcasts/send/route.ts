@@ -53,7 +53,7 @@ function stripLeadingNameMentions(message: string, names: string[]): string {
   for (const name of names) {
     const escaped = escapeRegExp(name);
     const pattern = new RegExp(
-      `^${escaped}(?:\\s*(?:[,:;.!?\\-\\u2013\\u2014\\u0964])\\s*|\\s+)`,
+      `^${escaped}(?:\\s*(?:[,:;.!?\\u2013\\u2014\\u0964-])\\s*|\\s+)`,
       "iu",
     );
 

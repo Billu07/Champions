@@ -103,7 +103,7 @@ function stripLeadingTargetName(value: string, targetLabel: string): string {
   const name = targetLabel.trim();
   if (!name) return value.trim();
   const pattern = new RegExp(
-    `^${escapeRegExp(name)}(?:\\s*(?:,|:|;|\\.|!|\\?|\\-|\\u2013|\\u2014|\\u0964)\\s*|\\s+)`,
+    `^${escapeRegExp(name)}(?:\\s*(?:[,:;.!?\\u2013\\u2014\\u0964-])\\s*|\\s+)`,
     "iu",
   );
   const cleaned = value.trim().replace(pattern, "").trim();
