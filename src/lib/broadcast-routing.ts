@@ -74,6 +74,19 @@ function isQuotaError(message: string | null | undefined): boolean {
   return value.includes("429") || value.includes("quota") || value.includes("rate limit");
 }
 
+function isTransientAiConnectivityError(message: string | null | undefined): boolean {
+  const value = String(message ?? "").toLowerCase();
+  return (
+    value.includes("timed out") ||
+    value.includes("timeout") ||
+    value.includes("fetch failed") ||
+    value.includes("network") ||
+    value.includes("econnreset") ||
+    value.includes("und_err_connect_timeout") ||
+    value.includes("temporarily unavailable")
+  );
+}
+
 const CATEGORY_TO_TAG: Record<Exclude<BroadcastAudienceCategory, "all" | "custom">, string> = {
   sales_team: "sales_field",
   head_office: "head_office",
@@ -271,14 +284,17 @@ export async function buildBroadcastPreview(
   const audienceHint = input.audienceCategory === "custom"
     ? (recipients.length > 0 ? `Custom recipients (${recipients.length})` : "Custom recipients from AI targeting")
     : audienceLabel(input.audienceCategory);
-  const draftResult = isQuotaError(aiRouteResult.meta.error)
+  const shouldSkipDraftAi = isQuotaError(aiRouteResult.meta.error) || isTransientAiConnectivityError(aiRouteResult.meta.error);
+  const draftResult = shouldSkipDraftAi
     ? {
         text: input.aiRegenerateInstruction?.trim() ? (input.previousDraft?.trim() || input.message.trim()) : input.message.trim(),
         mode: input.aiRegenerateInstruction?.trim() ? "regenerate" as const : "rewrite" as const,
         detectedInstruction: Boolean(input.preferInstructionMode),
         meta: {
           usedFallback: true,
-          error: "Skipped message drafting because AI quota is currently exceeded",
+          error: isQuotaError(aiRouteResult.meta.error)
+            ? "Skipped message drafting because AI quota is currently exceeded"
+            : "Skipped message drafting because AI connectivity is unstable right now",
         },
       }
     : await buildCeoBroadcastDraftWithMeta({

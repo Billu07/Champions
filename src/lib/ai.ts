@@ -63,27 +63,46 @@ function errorMessage(error: unknown): string {
   return message.trim() || "Unknown AI error";
 }
 
+function normalizeAiErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.name === "AbortError") {
+    return "Gemini request timed out";
+  }
+  return errorMessage(error);
+}
+
+const GEMINI_REQUEST_TIMEOUT_MS = 12000;
+
 async function runGemini(prompt: string, asJson = false): Promise<string> {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GEMINI_REQUEST_TIMEOUT_MS);
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: prompt }],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.2,
-        responseMimeType: asJson ? "application/json" : "text/plain",
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.2,
+          responseMimeType: asJson ? "application/json" : "text/plain",
+        },
+      }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    throw new Error(normalizeAiErrorMessage(error));
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const data = (await response.json().catch(() => ({}))) as GeminiResponse;
 

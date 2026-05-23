@@ -2,9 +2,12 @@ import { z } from "zod";
 import { fail, ok } from "@/lib/http";
 import { requestHasAdminSession } from "@/lib/auth";
 import { buildBroadcastPreview } from "@/lib/broadcast-routing";
-import { logError } from "@/lib/logger";
+import { logError, logInfo } from "@/lib/logger";
 import { insertMentionAudit, listEmployees } from "@/lib/repository";
 import type { BroadcastPreviewRequest } from "@/lib/types";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 const schema = z.object({
   message: z.string().min(1),
@@ -19,6 +22,7 @@ const schema = z.object({
 });
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
   if (!(await requestHasAdminSession(request))) {
     return fail("Unauthorized", 401);
   }
@@ -47,6 +51,14 @@ export async function POST(request: Request) {
       },
       allEmployees,
     );
+
+    logInfo("Broadcast preview generated", {
+      durationMs: Date.now() - startedAt,
+      recipients: preview.recipients.length,
+      routes: preview.routes.length,
+      routeAiFallback: preview.aiDiagnostics.routeExtraction.usedFallback,
+      rewriteAiFallback: preview.aiDiagnostics.messageRewrite.usedFallback,
+    });
 
     try {
       await insertMentionAudit({
@@ -86,6 +98,7 @@ export async function POST(request: Request) {
   } catch (error) {
     logError("Broadcast preview failed", {
       error: (error as Error).message,
+      durationMs: Date.now() - startedAt,
     });
     return fail((error as Error).message || "Failed to generate broadcast preview", 500);
   }

@@ -84,6 +84,9 @@ const groupTagMap: Record<Exclude<GroupAudience, "all">, string> = {
   customers: "customers",
 };
 
+const PREVIEW_REQUEST_TIMEOUT_MS = 25000;
+const PREVIEW_MAX_RETRIES = 1;
+
 function dedupe(values: string[]): string[] {
   return Array.from(new Set(values));
 }
@@ -155,6 +158,37 @@ function employeeMatchesQuery(employee: Employee, query: string): boolean {
     String(employee.department || "").toLowerCase().includes(q) ||
     String(employee.designation || "").toLowerCase().includes(q)
   );
+}
+
+function networkErrorMessage(error: unknown): string {
+  const text = ((error as Error)?.message ?? "").trim();
+  if (text.toLowerCase().includes("aborted") || text.toLowerCase().includes("timeout")) {
+    return "Preview request timed out. Please retry.";
+  }
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return "You appear offline. Check internet and retry.";
+  }
+  return text || "Network error. Please retry.";
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 function isEmployeeInAudience(employee: Employee, audience: GroupAudience): boolean {
@@ -412,21 +446,42 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
     setStatus(options?.loadingStatus || "Generating AI preview...");
 
     try {
-      const res = await fetch("/api/broadcasts/preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: trimmedMessage,
-          audienceCategory: payload.audienceCategory,
-          selectedEmployeeIds: payload.selectedEmployeeIds,
-          selectedTagKeys: [],
-          useAiRouting: payload.useAiRouting,
-          lockToSelectedRecipients: payload.lockToSelectedRecipients,
-          previousDraft: options?.previousDraft ?? "",
-          aiRegenerateInstruction: options?.aiRegenerateInstruction ?? "",
-          preferInstructionMode: options?.preferInstructionMode ?? false,
-        }),
+      const requestBody = JSON.stringify({
+        message: trimmedMessage,
+        audienceCategory: payload.audienceCategory,
+        selectedEmployeeIds: payload.selectedEmployeeIds,
+        selectedTagKeys: [],
+        useAiRouting: payload.useAiRouting,
+        lockToSelectedRecipients: payload.lockToSelectedRecipients,
+        previousDraft: options?.previousDraft ?? "",
+        aiRegenerateInstruction: options?.aiRegenerateInstruction ?? "",
+        preferInstructionMode: options?.preferInstructionMode ?? false,
       });
+
+      let res: Response | null = null;
+      let lastNetworkError: unknown = null;
+      for (let attempt = 0; attempt <= PREVIEW_MAX_RETRIES; attempt += 1) {
+        try {
+          res = await fetchJsonWithTimeout(
+            "/api/broadcasts/preview",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: requestBody,
+            },
+            PREVIEW_REQUEST_TIMEOUT_MS,
+          );
+          break;
+        } catch (error) {
+          lastNetworkError = error;
+          if (attempt >= PREVIEW_MAX_RETRIES) break;
+          await delay(450);
+        }
+      }
+
+      if (!res) {
+        throw lastNetworkError ?? new Error("Preview request failed");
+      }
 
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -453,9 +508,10 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
         setStatus(`${modeText}: ${parsed.recipients.length} recipient(s), ${parsed.routes.length} route(s).`);
         pushToast("success", "Preview ready", `${modeText} for ${parsed.recipients.length} recipients.`);
       }
-    } catch {
-      setStatus("Preview request failed. Please retry.");
-      pushToast("error", "Network error", "Preview request failed. Please retry.");
+    } catch (error) {
+      const msg = networkErrorMessage(error);
+      setStatus(msg);
+      pushToast("error", "Network error", msg);
     } finally {
       setPreviewing(false);
     }
@@ -555,9 +611,10 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       }
 
       applySendResponse(json as Record<string, unknown>);
-    } catch {
-      setStatus("Broadcast request failed. Please retry.");
-      pushToast("error", "Network error", "Broadcast request failed. Please retry.");
+    } catch (error) {
+      const msg = networkErrorMessage(error);
+      setStatus(msg);
+      pushToast("error", "Network error", msg);
     } finally {
       setSending(false);
     }
@@ -645,9 +702,10 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       }
 
       applySendResponse(sendJson as Record<string, unknown>);
-    } catch {
-      setStatus("Broadcast request failed. Please retry.");
-      pushToast("error", "Network error", "Broadcast request failed. Please retry.");
+    } catch (error) {
+      const msg = networkErrorMessage(error);
+      setStatus(msg);
+      pushToast("error", "Network error", msg);
     } finally {
       setSending(false);
     }
