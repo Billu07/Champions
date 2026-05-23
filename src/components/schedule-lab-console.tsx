@@ -10,7 +10,6 @@ type ScheduleEntry = {
   minuteOfDay: number;
   timeHHmm: string;
   bodyText: string;
-  templateName: string;
   languageCode: string;
   isActive: boolean;
   legacySlotKey: ScheduleSlot | null;
@@ -38,7 +37,6 @@ const defaultForm = {
   label: "",
   timeHHmm: "08:00",
   bodyText: "",
-  templateName: "ceo_template",
   languageCode: "en",
   isActive: true,
   reportSlotKey: "",
@@ -107,7 +105,6 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
       label: form.label.trim(),
       timeHHmm: form.timeHHmm,
       bodyText: form.bodyText.trim(),
-      templateName: form.templateName.trim() || "ceo_template",
       languageCode: form.languageCode.trim() || "en",
       isActive: form.isActive,
       reportSlotKey: form.reportSlotKey ? normalizeReportSlotInput(form.reportSlotKey) : null,
@@ -141,7 +138,6 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
       label: item.label,
       timeHHmm: item.timeHHmm,
       bodyText: item.bodyText,
-      templateName: item.templateName,
       languageCode: item.languageCode,
       isActive: item.isActive,
       reportSlotKey: item.reportSlotKey ?? "",
@@ -160,7 +156,6 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
       label: editForm.label.trim(),
       timeHHmm: editForm.timeHHmm,
       bodyText: editForm.bodyText.trim(),
-      templateName: editForm.templateName.trim() || "ceo_template",
       languageCode: editForm.languageCode.trim() || "en",
       isActive: editForm.isActive,
       reportSlotKey: editForm.reportSlotKey ? normalizeReportSlotInput(editForm.reportSlotKey) : null,
@@ -253,7 +248,7 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
       <form className="card grid schedule-lab-create" style={{ gap: 10 }} onSubmit={onCreate}>
         <h2>Create Schedule</h2>
         <div className="row">
-          <label className="col-4 grid" style={{ gap: 6 }}>
+          <label className="col-5 grid" style={{ gap: 6 }}>
             <span>Label</span>
             <input
               className="input"
@@ -263,7 +258,7 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
               required
             />
           </label>
-          <label className="col-2 grid" style={{ gap: 6 }}>
+          <label className="col-3 grid" style={{ gap: 6 }}>
             <span>Time (Dhaka)</span>
             <input
               className="input"
@@ -273,16 +268,7 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
               required
             />
           </label>
-          <label className="col-3 grid" style={{ gap: 6 }}>
-            <span>Template Name</span>
-            <input
-              className="input"
-              value={form.templateName}
-              onChange={(event) => setForm((prev) => ({ ...prev, templateName: event.target.value }))}
-              required
-            />
-          </label>
-          <label className="col-3 grid" style={{ gap: 6 }}>
+          <label className="col-4 grid" style={{ gap: 6 }}>
             <span>Language Code</span>
             <input
               className="input"
@@ -388,7 +374,6 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
                 <th style={{ minWidth: 90 }}>Active</th>
                 <th style={{ minWidth: 130 }}>Report Slot</th>
                 <th style={{ minWidth: 140 }}>Report Policy</th>
-                <th style={{ minWidth: 130 }}>Template</th>
                 <th style={{ minWidth: 320 }}>Body</th>
                 <th style={{ minWidth: 240 }}>Actions</th>
               </tr>
@@ -469,22 +454,6 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
                     </td>
                     <td>
                       {isEditing ? (
-                        <div className="grid" style={{ gap: 6 }}>
-                          <input
-                            className="input"
-                            value={editForm.templateName}
-                            onChange={(event) => setEditForm((prev) => ({ ...prev, templateName: event.target.value }))}
-                          />
-                          <input
-                            className="input"
-                            value={editForm.languageCode}
-                            onChange={(event) => setEditForm((prev) => ({ ...prev, languageCode: event.target.value }))}
-                          />
-                        </div>
-                      ) : `${item.templateName} (${item.languageCode})`}
-                    </td>
-                    <td>
-                      {isEditing ? (
                         <textarea
                           value={editForm.bodyText}
                           onChange={(event) => setEditForm((prev) => ({ ...prev, bodyText: event.target.value }))}
@@ -520,7 +489,7 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
                 );
               }) : (
                 <tr>
-                  <td colSpan={8}>No schedule entries found.</td>
+                  <td colSpan={7}>No schedule entries found.</td>
                 </tr>
               )}
             </tbody>
