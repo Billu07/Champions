@@ -935,6 +935,7 @@ details summary {
 
 .employee-manager label > span,
 .broadcast-console label > span,
+.schedule-lab label > span,
 .reports-board label > span,
 .test-scheduler-console label > span {
   font-weight: 600;
@@ -992,6 +993,16 @@ details summary {
 
 .broadcast-group-table {
   border-color: #cadaca;
+}
+
+.schedule-lab .table-wrap td:nth-child(1),
+.schedule-lab .table-wrap td:nth-child(6) {
+  white-space: normal;
+}
+
+.schedule-lab .table-wrap td,
+.schedule-lab .table-wrap th {
+  vertical-align: top;
 }
 
 .broadcast-mixed-mode,

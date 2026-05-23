@@ -1,7 +1,7 @@
 ﻿import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { addDays, set } from "date-fns";
 import { SLOT_DEFINITIONS } from "@/lib/constants";
-import type { SlotKey } from "@/lib/types";
+import type { LegacySlotKey } from "@/lib/types";
 
 export function dhakaDayName(date: Date, timezone: string): string {
   return formatInTimeZone(date, timezone, "EEEE");
@@ -11,13 +11,13 @@ export function dhakaDateISO(date: Date, timezone: string): string {
   return formatInTimeZone(date, timezone, "yyyy-MM-dd");
 }
 
-export function slotByKey(slot: SlotKey) {
+export function slotByKey(slot: LegacySlotKey) {
   const found = SLOT_DEFINITIONS.find((item) => item.key === slot);
   if (!found) throw new Error(`Unknown slot: ${slot}`);
   return found;
 }
 
-export function slotForTimestamp(date: Date, timezone: string): SlotKey {
+export function slotForTimestamp(date: Date, timezone: string): LegacySlotKey {
   const zoned = toZonedTime(date, timezone);
   const minuteOfDay = zoned.getHours() * 60 + zoned.getMinutes();
 
@@ -32,7 +32,7 @@ export function slotForTimestamp(date: Date, timezone: string): SlotKey {
   return "morning";
 }
 
-export function slotWindow(date: Date, slot: SlotKey, timezone: string): {
+export function slotWindow(date: Date, slot: LegacySlotKey, timezone: string): {
   startISO: string;
   endISO: string;
 } {
@@ -62,4 +62,9 @@ export function slotWindow(date: Date, slot: SlotKey, timezone: string): {
     startISO: startLocal.toISOString(),
     endISO: endLocal.toISOString(),
   };
+}
+
+export function minuteOfDayForTimezone(date: Date, timezone: string): number {
+  const zoned = toZonedTime(date, timezone);
+  return zoned.getHours() * 60 + zoned.getMinutes();
 }

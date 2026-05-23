@@ -1,7 +1,9 @@
-export type SlotKey = "morning" | "noon" | "afternoon" | "evening";
+export type LegacySlotKey = "morning" | "noon" | "afternoon" | "evening";
+export type SlotKey = string;
+export type ReportSlotKey = string;
 
 export type SlotDefinition = {
-  key: SlotKey;
+  key: LegacySlotKey;
   label: string;
   startHour: number;
   startMinute: number;

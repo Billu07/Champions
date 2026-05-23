@@ -11,25 +11,20 @@ import {
   getSlotResponsesInRange,
   getTrackedEmployees,
   insertReport,
+  listActiveReportSlotPolicies,
   markMissingForSlot,
+  type ReportSlotPolicy,
 } from "@/lib/repository";
-import type { ReportKind, SlotKey } from "@/lib/types";
+import type { ReportKind, ReportSlotKey } from "@/lib/types";
 
-const SLOT_KEYS: SlotKey[] = ["morning", "noon", "afternoon", "evening"];
-
-const SLOT_PRIORITY: Record<
-  SlotKey,
-  { label: string; mandatory: boolean; critical: boolean; weight: number }
-> = {
-  morning: { label: "Morning", mandatory: false, critical: false, weight: 0 },
-  noon: { label: "Noon", mandatory: true, critical: false, weight: 1 },
-  afternoon: { label: "Afternoon", mandatory: true, critical: true, weight: 2.5 },
-  evening: { label: "Evening", mandatory: true, critical: true, weight: 3 },
+type SlotPolicy = {
+  key: ReportSlotKey;
+  label: string;
+  mandatory: boolean;
+  critical: boolean;
+  weight: number;
+  minuteOfDay: number;
 };
-
-const MANDATORY_SLOT_KEYS = SLOT_KEYS.filter((slot) => SLOT_PRIORITY[slot].mandatory);
-const CRITICAL_SLOT_KEYS = SLOT_KEYS.filter((slot) => SLOT_PRIORITY[slot].critical);
-const MANDATORY_WEIGHT_TOTAL = MANDATORY_SLOT_KEYS.reduce((sum, slot) => sum + SLOT_PRIORITY[slot].weight, 0);
 
 type SlotResponseRow = {
   employee_id: string;
@@ -70,7 +65,7 @@ type EmployeeDailyMetrics = {
     morningReplyReceived: boolean;
   };
   slotBreakdown: Array<{
-    slot: SlotKey;
+    slot: ReportSlotKey;
     label: string;
     mandatory: boolean;
     critical: boolean;
@@ -95,7 +90,7 @@ type EmployeePeriodMetrics = {
   weightedEarned: number;
   weightedPerformancePct: number;
   totalReplyFragments: number;
-  slotMatrix: Record<SlotKey, { expected: number; replied: number; missing: number }>;
+  slotMatrix: Record<ReportSlotKey, { expected: number; replied: number; missing: number }>;
 };
 
 function groupBy<T>(items: T[], key: (item: T) => string): Record<string, T[]> {
@@ -107,11 +102,106 @@ function groupBy<T>(items: T[], key: (item: T) => string): Record<string, T[]> {
   }, {});
 }
 
-function normalizeSlotKey(raw: string): SlotKey | null {
-  if (raw === "morning" || raw === "noon" || raw === "afternoon" || raw === "evening") {
-    return raw;
+function toPct(numerator: number, denominator: number): number {
+  if (denominator <= 0) return 0;
+  return Number(((numerator / denominator) * 100).toFixed(2));
+}
+
+function normalizeSlotKey(raw: unknown): ReportSlotKey | null {
+  const text = String(raw ?? "").trim().toLowerCase();
+  return text || null;
+}
+
+function humanizeSlotKey(key: string): string {
+  return key
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function fallbackPolicyForKey(key: ReportSlotKey): SlotPolicy {
+  if (key === "morning") {
+    return { key, label: "Morning", mandatory: false, critical: false, weight: 0, minuteOfDay: 8 * 60 };
   }
-  return null;
+  if (key === "noon") {
+    return { key, label: "Noon", mandatory: true, critical: false, weight: 1, minuteOfDay: 12 * 60 };
+  }
+  if (key === "afternoon") {
+    return { key, label: "Afternoon", mandatory: true, critical: true, weight: 2.5, minuteOfDay: 15 * 60 };
+  }
+  if (key === "evening") {
+    return { key, label: "Evening", mandatory: true, critical: true, weight: 3, minuteOfDay: 17 * 60 + 30 };
+  }
+  return {
+    key,
+    label: humanizeSlotKey(key),
+    mandatory: true,
+    critical: false,
+    weight: 1,
+    minuteOfDay: 24 * 60,
+  };
+}
+
+function normalizePolicy(input: ReportSlotPolicy): SlotPolicy {
+  const key = normalizeSlotKey(input.slotKey);
+  if (!key) {
+    throw new Error("Invalid report slot policy key");
+  }
+
+  const fallback = fallbackPolicyForKey(key);
+  const normalizedWeight = Number(input.weight);
+  return {
+    key,
+    label: String(input.label || fallback.label).trim() || fallback.label,
+    mandatory: Boolean(input.mandatory),
+    critical: Boolean(input.critical),
+    weight: Number.isFinite(normalizedWeight)
+      ? Number(Math.max(0, normalizedWeight).toFixed(2))
+      : fallback.weight,
+    minuteOfDay: Number.isFinite(input.minuteOfDay)
+      ? Math.max(0, Math.min(1439, Math.floor(input.minuteOfDay)))
+      : fallback.minuteOfDay,
+  };
+}
+
+function normalizePolicies(inputs: ReportSlotPolicy[]): SlotPolicy[] {
+  const unique = new Map<string, SlotPolicy>();
+
+  for (const item of inputs) {
+    try {
+      const normalized = normalizePolicy(item);
+      if (!unique.has(normalized.key)) {
+        unique.set(normalized.key, normalized);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return Array.from(unique.values()).sort((a, b) => {
+    if (a.minuteOfDay !== b.minuteOfDay) return a.minuteOfDay - b.minuteOfDay;
+    return a.label.localeCompare(b.label);
+  });
+}
+
+function withObservedPolicies(basePolicies: SlotPolicy[], rows: SlotResponseRow[]): SlotPolicy[] {
+  const unique = new Map<string, SlotPolicy>(basePolicies.map((policy) => [policy.key, policy]));
+
+  for (const row of rows) {
+    const key = normalizeSlotKey(row.slot_key);
+    if (!key || unique.has(key)) continue;
+    unique.set(key, fallbackPolicyForKey(key));
+  }
+
+  return Array.from(unique.values()).sort((a, b) => {
+    if (a.minuteOfDay !== b.minuteOfDay) return a.minuteOfDay - b.minuteOfDay;
+    return a.label.localeCompare(b.label);
+  });
+}
+
+function buildPolicyMap(slotPolicies: SlotPolicy[]): Map<ReportSlotKey, SlotPolicy> {
+  return new Map(slotPolicies.map((policy) => [policy.key, policy]));
 }
 
 function resolveEmployeeName(row: SlotResponseRow | undefined): string {
@@ -125,10 +215,12 @@ function enumerateDates(startDate: string, endDate: string): string[] {
   const end = parseISO(endDate);
   const dates: string[] = [];
   let cursor = start;
+
   while (cursor <= end) {
     dates.push(format(cursor, "yyyy-MM-dd"));
     cursor = addDays(cursor, 1);
   }
+
   return dates;
 }
 
@@ -138,19 +230,19 @@ function isWorkingTrackingDate(date: string): boolean {
   return WORKING_DAYS.includes(dayName);
 }
 
-async function ensureSlotCoverageForDates(dates: string[]): Promise<string[]> {
+async function ensureSlotCoverageForDates(dates: string[], slotPolicies: SlotPolicy[]): Promise<string[]> {
   const trackedEmployees = await getTrackedEmployees();
   const employeeIds = trackedEmployees.map((employee) => employee.id);
 
-  if (employeeIds.length === 0 || dates.length === 0) {
+  if (employeeIds.length === 0 || dates.length === 0 || slotPolicies.length === 0) {
     return employeeIds;
   }
 
   for (const trackingDate of dates) {
-    for (const slotKey of SLOT_KEYS) {
+    for (const policy of slotPolicies) {
       await markMissingForSlot({
         trackingDate,
-        slotKey,
+        slotKey: policy.key,
         employeeIds,
       });
     }
@@ -159,9 +251,22 @@ async function ensureSlotCoverageForDates(dates: string[]): Promise<string[]> {
   return employeeIds;
 }
 
-function toPct(numerator: number, denominator: number): number {
-  if (denominator <= 0) return 0;
-  return Number(((numerator / denominator) * 100).toFixed(2));
+function buildPolicyInstruction(slotPolicies: SlotPolicy[]): string {
+  const mandatory = slotPolicies.filter((item) => item.mandatory);
+  const critical = slotPolicies.filter((item) => item.critical);
+  const optional = slotPolicies.filter((item) => !item.mandatory);
+
+  const mandatoryText = mandatory.length
+    ? `Mandatory slots: ${mandatory.map((item) => item.label).join(", ")}.`
+    : "No mandatory slots are configured.";
+  const criticalText = critical.length
+    ? `Critical slots: ${critical.map((item) => item.label).join(", ")}.`
+    : "No slots are marked critical.";
+  const optionalText = optional.length
+    ? `Optional slots: ${optional.map((item) => item.label).join(", ")}.`
+    : "No optional slots are configured.";
+
+  return `${mandatoryText} ${criticalText} ${optionalText} Use configured slot weights for weighted performance scoring.`;
 }
 
 function buildDailyEmployeeMetrics(
@@ -169,26 +274,27 @@ function buildDailyEmployeeMetrics(
   employeeName: string,
   rows: SlotResponseRow[],
   reportDate: string,
+  slotPolicies: SlotPolicy[],
 ): EmployeeDailyMetrics {
-  const bySlot = new Map<SlotKey, SlotResponseRow>();
+  const bySlot = new Map<ReportSlotKey, SlotResponseRow>();
   for (const row of rows) {
     const slot = normalizeSlotKey(row.slot_key);
     if (!slot) continue;
     bySlot.set(slot, row);
   }
 
-  const slotBreakdown = SLOT_KEYS.map((slot) => {
-    const row = bySlot.get(slot);
+  const slotBreakdown = slotPolicies.map((policy) => {
+    const row = bySlot.get(policy.key);
     const replyCount = Number(row?.reply_count ?? 0);
     const replied = row ? !row.is_missing : false;
     const snippet = row?.merged_text?.trim() ? row.merged_text.trim().slice(0, 220) : null;
 
     return {
-      slot,
-      label: SLOT_PRIORITY[slot].label,
-      mandatory: SLOT_PRIORITY[slot].mandatory,
-      critical: SLOT_PRIORITY[slot].critical,
-      weight: SLOT_PRIORITY[slot].weight,
+      slot: policy.key,
+      label: policy.label,
+      mandatory: policy.mandatory,
+      critical: policy.critical,
+      weight: policy.weight,
       replied,
       replyCount,
       firstReplyAt: row?.first_reply_at ?? null,
@@ -197,8 +303,19 @@ function buildDailyEmployeeMetrics(
     };
   });
 
+  const mandatorySlotsExpected = slotBreakdown.filter((slot) => slot.mandatory).length;
+  const criticalSlotsExpected = slotBreakdown.filter((slot) => slot.critical).length;
+
   const mandatorySlotsReplied = slotBreakdown.filter((slot) => slot.mandatory && slot.replied).length;
   const criticalSlotsReplied = slotBreakdown.filter((slot) => slot.critical && slot.replied).length;
+
+  const weightedExpected = Number(
+    slotBreakdown
+      .filter((slot) => slot.mandatory)
+      .reduce((sum, slot) => sum + slot.weight, 0)
+      .toFixed(2),
+  );
+
   const weightedEarned = Number(
     slotBreakdown
       .filter((slot) => slot.mandatory && slot.replied)
@@ -211,7 +328,7 @@ function buildDailyEmployeeMetrics(
   const missingSlots = slotBreakdown.length - repliedSlots;
 
   return {
-    reportVersion: 2,
+    reportVersion: 3,
     period: {
       type: "daily",
       startDate: reportDate,
@@ -222,15 +339,15 @@ function buildDailyEmployeeMetrics(
       name: employeeName,
     },
     summary: {
-      mandatorySlotsExpected: MANDATORY_SLOT_KEYS.length,
+      mandatorySlotsExpected,
       mandatorySlotsReplied,
-      mandatoryCompliancePct: toPct(mandatorySlotsReplied, MANDATORY_SLOT_KEYS.length),
-      criticalSlotsExpected: CRITICAL_SLOT_KEYS.length,
+      mandatoryCompliancePct: toPct(mandatorySlotsReplied, mandatorySlotsExpected),
+      criticalSlotsExpected,
       criticalSlotsReplied,
-      criticalCompliancePct: toPct(criticalSlotsReplied, CRITICAL_SLOT_KEYS.length),
-      weightedExpected: MANDATORY_WEIGHT_TOTAL,
+      criticalCompliancePct: toPct(criticalSlotsReplied, criticalSlotsExpected),
+      weightedExpected,
       weightedEarned,
-      weightedPerformancePct: toPct(weightedEarned, MANDATORY_WEIGHT_TOTAL),
+      weightedPerformancePct: toPct(weightedEarned, weightedExpected),
       totalReplyFragments,
       repliedSlots,
       missingSlots,
@@ -245,13 +362,14 @@ function buildPeriodEmployeeMetrics(
   employeeName: string,
   rows: SlotResponseRow[],
   periodDays: number,
+  slotPolicies: SlotPolicy[],
 ): EmployeePeriodMetrics {
-  const slotMatrix: Record<SlotKey, { expected: number; replied: number; missing: number }> = {
-    morning: { expected: periodDays, replied: 0, missing: 0 },
-    noon: { expected: periodDays, replied: 0, missing: 0 },
-    afternoon: { expected: periodDays, replied: 0, missing: 0 },
-    evening: { expected: periodDays, replied: 0, missing: 0 },
-  };
+  const policyMap = buildPolicyMap(slotPolicies);
+  const slotMatrix: Record<ReportSlotKey, { expected: number; replied: number; missing: number }> = {};
+
+  for (const policy of slotPolicies) {
+    slotMatrix[policy.key] = { expected: periodDays, replied: 0, missing: 0 };
+  }
 
   let totalReplyFragments = 0;
   let weightedEarned = 0;
@@ -260,31 +378,51 @@ function buildPeriodEmployeeMetrics(
     const slot = normalizeSlotKey(row.slot_key);
     if (!slot) continue;
 
+    if (!slotMatrix[slot]) {
+      slotMatrix[slot] = { expected: periodDays, replied: 0, missing: 0 };
+    }
+
+    if (!policyMap.has(slot)) {
+      policyMap.set(slot, fallbackPolicyForKey(slot));
+    }
+
+    const policy = policyMap.get(slot);
     const replyCount = Number(row.reply_count ?? 0);
     totalReplyFragments += replyCount;
 
     if (!row.is_missing) {
       slotMatrix[slot].replied += 1;
-      if (SLOT_PRIORITY[slot].mandatory) {
-        weightedEarned += SLOT_PRIORITY[slot].weight;
+      if (policy?.mandatory) {
+        weightedEarned += policy.weight;
       }
     } else {
       slotMatrix[slot].missing += 1;
     }
   }
 
-  for (const slot of SLOT_KEYS) {
-    const accounted = slotMatrix[slot].replied + slotMatrix[slot].missing;
+  for (const key of Object.keys(slotMatrix)) {
+    const slotKey = key as ReportSlotKey;
+    const accounted = slotMatrix[slotKey].replied + slotMatrix[slotKey].missing;
     if (accounted < periodDays) {
-      slotMatrix[slot].missing += periodDays - accounted;
+      slotMatrix[slotKey].missing += periodDays - accounted;
     }
   }
 
-  const mandatorySlotsExpected = periodDays * MANDATORY_SLOT_KEYS.length;
-  const mandatorySlotsReplied = MANDATORY_SLOT_KEYS.reduce((sum, slot) => sum + slotMatrix[slot].replied, 0);
-  const criticalSlotsExpected = periodDays * CRITICAL_SLOT_KEYS.length;
-  const criticalSlotsReplied = CRITICAL_SLOT_KEYS.reduce((sum, slot) => sum + slotMatrix[slot].replied, 0);
-  const weightedExpected = Number((periodDays * MANDATORY_WEIGHT_TOTAL).toFixed(2));
+  const policies = Array.from(policyMap.values());
+  const mandatoryPolicies = policies.filter((policy) => policy.mandatory);
+  const criticalPolicies = policies.filter((policy) => policy.critical);
+
+  const mandatorySlotsExpected = periodDays * mandatoryPolicies.length;
+  const mandatorySlotsReplied = mandatoryPolicies.reduce(
+    (sum, policy) => sum + (slotMatrix[policy.key]?.replied ?? 0),
+    0,
+  );
+
+  const criticalSlotsExpected = periodDays * criticalPolicies.length;
+  const criticalSlotsReplied = criticalPolicies.reduce((sum, policy) => sum + (slotMatrix[policy.key]?.replied ?? 0), 0);
+
+  const mandatoryWeightTotal = mandatoryPolicies.reduce((sum, policy) => sum + policy.weight, 0);
+  const weightedExpected = Number((periodDays * mandatoryWeightTotal).toFixed(2));
 
   return {
     employeeId,
@@ -306,17 +444,22 @@ function buildTeamDailyMetrics(
   reportDate: string,
   employees: EmployeeDailyMetrics[],
   totalRows: number,
+  slotPolicies: SlotPolicy[],
 ): Record<string, unknown> {
   const membersTracked = employees.length;
 
-  const slotSummary = SLOT_KEYS.map((slot) => {
-    const replied = employees.filter((item) => item.slotBreakdown.find((detail) => detail.slot === slot)?.replied).length;
+  const mandatorySlots = slotPolicies.filter((policy) => policy.mandatory).map((policy) => policy.key);
+  const criticalSlots = slotPolicies.filter((policy) => policy.critical).map((policy) => policy.key);
+
+  const slotSummary = slotPolicies.map((policy) => {
+    const replied = employees.filter((item) => item.slotBreakdown.find((detail) => detail.slot === policy.key)?.replied).length;
     const expected = membersTracked;
     return {
-      slot,
-      label: SLOT_PRIORITY[slot].label,
-      critical: SLOT_PRIORITY[slot].critical,
-      mandatory: SLOT_PRIORITY[slot].mandatory,
+      slot: policy.key,
+      label: policy.label,
+      critical: policy.critical,
+      mandatory: policy.mandatory,
+      weight: policy.weight,
       expected,
       replied,
       missing: Math.max(expected - replied, 0),
@@ -342,21 +485,22 @@ function buildTeamDailyMetrics(
       employeeId: item.employee.id,
       employeeName: item.employee.name,
       criticalSlotsReplied: item.summary.criticalSlotsReplied,
+      criticalSlotsExpected: item.summary.criticalSlotsExpected,
       weightedPerformancePct: item.summary.weightedPerformancePct,
     }));
 
   return {
-    reportVersion: 2,
+    reportVersion: 3,
     period: {
       type: "daily",
       startDate: reportDate,
       endDate: reportDate,
     },
     policy: {
-      morningOptional: true,
-      criticalSlots: CRITICAL_SLOT_KEYS,
-      mandatorySlots: MANDATORY_SLOT_KEYS,
-      slotWeights: SLOT_PRIORITY,
+      mandatorySlots,
+      criticalSlots,
+      optionalSlots: slotPolicies.filter((policy) => !policy.mandatory).map((policy) => policy.key),
+      slotWeights: Object.fromEntries(slotPolicies.map((policy) => [policy.key, policy.weight])),
     },
     kpi: {
       membersTracked,
@@ -382,17 +526,19 @@ function buildTeamPeriodMetrics(input: {
   periodDays: number;
   members: EmployeePeriodMetrics[];
   totalRows: number;
+  slotPolicies: SlotPolicy[];
 }): Record<string, unknown> {
   const membersTracked = input.members.length;
 
-  const slotSummary = SLOT_KEYS.map((slot) => {
+  const slotSummary = input.slotPolicies.map((policy) => {
     const expected = membersTracked * input.periodDays;
-    const replied = input.members.reduce((sum, item) => sum + item.slotMatrix[slot].replied, 0);
+    const replied = input.members.reduce((sum, member) => sum + (member.slotMatrix[policy.key]?.replied ?? 0), 0);
     return {
-      slot,
-      label: SLOT_PRIORITY[slot].label,
-      critical: SLOT_PRIORITY[slot].critical,
-      mandatory: SLOT_PRIORITY[slot].mandatory,
+      slot: policy.key,
+      label: policy.label,
+      critical: policy.critical,
+      mandatory: policy.mandatory,
+      weight: policy.weight,
       expected,
       replied,
       missing: Math.max(expected - replied, 0),
@@ -406,7 +552,9 @@ function buildTeamPeriodMetrics(input: {
       )
     : 0;
 
-  const criticalExpectedPerMember = input.periodDays * CRITICAL_SLOT_KEYS.length;
+  const criticalSlotCount = input.slotPolicies.filter((policy) => policy.critical).length;
+  const criticalExpectedPerMember = input.periodDays * criticalSlotCount;
+
   const criticalPerfectCount = input.members.filter(
     (member) => member.criticalSlotsReplied === criticalExpectedPerMember,
   ).length;
@@ -435,7 +583,7 @@ function buildTeamPeriodMetrics(input: {
     }));
 
   return {
-    reportVersion: 2,
+    reportVersion: 3,
     period: {
       type: input.kind === "team_weekly" ? "weekly" : "monthly",
       startDate: input.startDate,
@@ -443,10 +591,10 @@ function buildTeamPeriodMetrics(input: {
       days: input.periodDays,
     },
     policy: {
-      morningOptional: true,
-      criticalSlots: CRITICAL_SLOT_KEYS,
-      mandatorySlots: MANDATORY_SLOT_KEYS,
-      slotWeights: SLOT_PRIORITY,
+      mandatorySlots: input.slotPolicies.filter((policy) => policy.mandatory).map((policy) => policy.key),
+      criticalSlots: input.slotPolicies.filter((policy) => policy.critical).map((policy) => policy.key),
+      optionalSlots: input.slotPolicies.filter((policy) => !policy.mandatory).map((policy) => policy.key),
+      slotWeights: Object.fromEntries(input.slotPolicies.map((policy) => [policy.key, policy.weight])),
     },
     kpi: {
       membersTracked,
@@ -462,28 +610,31 @@ function buildTeamPeriodMetrics(input: {
   };
 }
 
-function fallbackIndividualNarrative(metrics: EmployeeDailyMetrics): string {
+function fallbackIndividualNarrative(metrics: EmployeeDailyMetrics, policyInstruction: string): string {
   return [
-    `${metrics.employee.name} daily summary: morning reply is optional, while afternoon and evening are critical.`,
+    `${metrics.employee.name} daily summary.`,
     `Critical compliance: ${metrics.summary.criticalSlotsReplied}/${metrics.summary.criticalSlotsExpected} (${metrics.summary.criticalCompliancePct}%).`,
     `Mandatory compliance: ${metrics.summary.mandatorySlotsReplied}/${metrics.summary.mandatorySlotsExpected} (${metrics.summary.mandatoryCompliancePct}%).`,
     `Weighted performance: ${metrics.summary.weightedPerformancePct}%.`,
+    policyInstruction,
   ].join(" ");
 }
 
-function fallbackTeamNarrative(reportDate: string, metrics: Record<string, unknown>): string {
+function fallbackTeamNarrative(reportDate: string, metrics: Record<string, unknown>, policyInstruction: string): string {
   const kpi = (metrics.kpi ?? {}) as Record<string, unknown>;
   return [
     `Team daily summary for ${reportDate}.`,
     `Tracked members: ${Number(kpi.membersTracked ?? 0)}.`,
     `Critical-perfect members: ${Number(kpi.criticalPerfectCount ?? 0)} (${Number(kpi.criticalCompliancePct ?? 0)}%).`,
     `Average weighted performance: ${Number(kpi.averageWeightedPerformancePct ?? 0)}%.`,
+    policyInstruction,
   ].join(" ");
 }
 
 function fallbackPeriodNarrative(
   title: string,
   metrics: Record<string, unknown>,
+  policyInstruction: string,
 ): string {
   const kpi = (metrics.kpi ?? {}) as Record<string, unknown>;
   return [
@@ -491,7 +642,13 @@ function fallbackPeriodNarrative(
     `Tracked members: ${Number(kpi.membersTracked ?? 0)}.`,
     `Average weighted performance: ${Number(kpi.averageWeightedPerformancePct ?? 0)}%.`,
     `Critical-perfect share: ${Number(kpi.criticalPerfectPct ?? 0)}%.`,
+    policyInstruction,
   ].join(" ");
+}
+
+async function loadNormalizedSlotPolicies(): Promise<SlotPolicy[]> {
+  const raw = await listActiveReportSlotPolicies();
+  return normalizePolicies(raw);
 }
 
 async function buildTeamRangeReport(input: {
@@ -502,16 +659,19 @@ async function buildTeamRangeReport(input: {
   aiInstruction: string;
 }) {
   const dates = enumerateDates(input.startDate, input.endDate).filter(isWorkingTrackingDate);
-  await ensureSlotCoverageForDates(dates);
+  const activePolicies = await loadNormalizedSlotPolicies();
+  await ensureSlotCoverageForDates(dates, activePolicies);
 
   const workingDateSet = new Set(dates);
   const rows = ((await getSlotResponsesInRange(input.startDate, input.endDate)) as SlotResponseRow[])
     .filter((row) => workingDateSet.has(String(row.tracking_date)));
+
+  const effectivePolicies = withObservedPolicies(activePolicies, rows);
   const byEmployee = groupBy(rows, (row) => row.employee_id);
   const periodDays = dates.length;
 
   const memberMetrics = Object.entries(byEmployee).map(([employeeId, employeeRows]) =>
-    buildPeriodEmployeeMetrics(employeeId, resolveEmployeeName(employeeRows[0]), employeeRows, periodDays),
+    buildPeriodEmployeeMetrics(employeeId, resolveEmployeeName(employeeRows[0]), employeeRows, periodDays, effectivePolicies),
   );
 
   const teamMetrics = buildTeamPeriodMetrics({
@@ -521,15 +681,17 @@ async function buildTeamRangeReport(input: {
     periodDays,
     members: memberMetrics,
     totalRows: rows.length,
+    slotPolicies: effectivePolicies,
   });
 
-  let narrative = fallbackPeriodNarrative(input.title, teamMetrics);
+  const policyInstruction = buildPolicyInstruction(effectivePolicies);
+  let narrative = fallbackPeriodNarrative(input.title, teamMetrics, policyInstruction);
 
   try {
     narrative = await summarizeReport(
       input.title,
       teamMetrics,
-      input.aiInstruction,
+      `${input.aiInstruction} ${policyInstruction}`,
     );
   } catch (error) {
     logError(`${input.kind} AI summary failed`, {
@@ -554,9 +716,12 @@ async function buildTeamRangeReport(input: {
 }
 
 export async function generateDailyReports(reportDate: string) {
-  await ensureSlotCoverageForDates([reportDate]);
+  const activePolicies = await loadNormalizedSlotPolicies();
+  await ensureSlotCoverageForDates([reportDate], activePolicies);
 
   const responses = (await getSlotResponsesByDate(reportDate)) as SlotResponseRow[];
+  const effectivePolicies = withObservedPolicies(activePolicies, responses);
+  const policyInstruction = buildPolicyInstruction(effectivePolicies);
   const byEmployee = groupBy(responses, (item) => item.employee_id as string);
 
   await deleteReportsByDateAndKinds(reportDate, ["individual_daily", "team_daily"]);
@@ -568,16 +733,16 @@ export async function generateDailyReports(reportDate: string) {
 
   for (const [employeeId, rows] of Object.entries(byEmployee)) {
     const employeeName = resolveEmployeeName(rows[0]);
-    const metrics = buildDailyEmployeeMetrics(employeeId, employeeName, rows, reportDate);
+    const metrics = buildDailyEmployeeMetrics(employeeId, employeeName, rows, reportDate, effectivePolicies);
     individualMetricsList.push(metrics);
 
-    let narrative = fallbackIndividualNarrative(metrics);
+    let narrative = fallbackIndividualNarrative(metrics, policyInstruction);
 
     try {
       narrative = await summarizeReport(
         `Daily individual report for ${employeeName} (${reportDate})`,
         metrics,
-        "Write in English. Treat morning reply as optional. Afternoon and evening compliance are critical. Keep this concise and operational.",
+        `Write in English. Keep this concise and operational. ${policyInstruction}`,
       );
     } catch (error) {
       failures.push({
@@ -620,14 +785,14 @@ export async function generateDailyReports(reportDate: string) {
     }
   }
 
-  const teamMetrics = buildTeamDailyMetrics(reportDate, individualMetricsList, responses.length);
-  let teamNarrative = fallbackTeamNarrative(reportDate, teamMetrics);
+  const teamMetrics = buildTeamDailyMetrics(reportDate, individualMetricsList, responses.length, effectivePolicies);
+  let teamNarrative = fallbackTeamNarrative(reportDate, teamMetrics, policyInstruction);
 
   try {
     teamNarrative = await summarizeReport(
       `Team daily report for ${reportDate}`,
       teamMetrics,
-      "Write in English for CEO-level review. Explicitly highlight afternoon and evening compliance risk; morning reply is optional.",
+      `Write in English for CEO-level review. Highlight compliance risks and operational actions. ${policyInstruction}`,
     );
   } catch (error) {
     failures.push({ reason: `Team AI summary failed: ${(error as Error).message}` });
@@ -691,7 +856,7 @@ export async function generateWeeklyReport(anchorDate: Date) {
     endDate: range.end,
     title: `Team weekly executive summary - ${range.start} to ${range.end}`,
     aiInstruction:
-      "Write in English as an executive weekly summary. Morning replies are optional, but afternoon and evening compliance are critical. Include concrete risks and next-week actions.",
+      "Write in English as an executive weekly summary. Include concrete risks and next-week actions.",
   });
 }
 
@@ -703,6 +868,6 @@ export async function generateMonthlyReport(anchorDate: Date) {
     endDate: range.end,
     title: `Team monthly executive summary - ${range.start} to ${range.end}`,
     aiInstruction:
-      "Write in English as a monthly executive review. Morning replies are optional. Prioritize afternoon/evening compliance trend, structural risks, and corrective actions for the next month.",
+      "Write in English as a monthly executive review. Prioritize compliance trend, structural risks, and corrective actions for next month.",
   });
 }

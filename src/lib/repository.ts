@@ -1,7 +1,13 @@
 ﻿import { normalizeBangladeshPhone } from "@/lib/phone";
 import { supabaseAdmin } from "@/lib/db";
 import { TRACKING_TAG_KEY } from "@/lib/constants";
-import type { BroadcastDeliveryLifecycleStatus, ReportKind, SlotKey } from "@/lib/types";
+import type {
+  BroadcastDeliveryLifecycleStatus,
+  LegacySlotKey,
+  ReportKind,
+  ReportSlotKey,
+  SlotKey,
+} from "@/lib/types";
 
 export type EmployeeRow = {
   id: string;
@@ -60,6 +66,7 @@ function ensureNoError(error: { message: string } | null, fallback: string): voi
 
 type EmployeesSchemaMode = "modern" | "legacy";
 type BroadcastDeliverySchemaMode = "modern" | "legacy";
+type ScheduleLabSchemaMode = "available" | "missing";
 
 const MODERN_EMPLOYEE_SELECT =
   "id,full_name,designation,department,branch,whatsapp_number_raw,whatsapp_e164,tracking_enabled,is_active,status,aliases,notes";
@@ -69,6 +76,7 @@ const LEGACY_EMPLOYEE_SELECT =
 let cachedEmployeeSchema: EmployeesSchemaMode | null = null;
 let cachedTagSupport: boolean | null = null;
 let cachedBroadcastDeliverySchema: BroadcastDeliverySchemaMode | null = null;
+let cachedScheduleLabSchema: ScheduleLabSchemaMode | null = null;
 
 function isMissingColumnOrTableError(error: { message?: string } | null | undefined): boolean {
   if (!error?.message) return false;
@@ -185,6 +193,27 @@ async function getBroadcastDeliverySchemaMode(): Promise<BroadcastDeliverySchema
   }
 
   throw new Error(probe.error.message || "Failed to detect broadcast delivery schema mode");
+}
+
+async function getScheduleLabSchemaMode(): Promise<ScheduleLabSchemaMode> {
+  if (cachedScheduleLabSchema) return cachedScheduleLabSchema;
+
+  const probe = await supabaseAdmin
+    .from("schedule_lab_entries")
+    .select("id")
+    .limit(1);
+
+  if (!probe.error) {
+    cachedScheduleLabSchema = "available";
+    return cachedScheduleLabSchema;
+  }
+
+  if (isMissingColumnOrTableError(probe.error)) {
+    cachedScheduleLabSchema = "missing";
+    return cachedScheduleLabSchema;
+  }
+
+  throw new Error(probe.error.message || "Failed to detect schedule lab schema mode");
 }
 
 function legacyDeliveryStatus(status: BroadcastDeliveryLifecycleStatus): "sent" | "failed" {
@@ -423,11 +452,312 @@ export async function getTrackedEmployees(): Promise<EmployeeRow[]> {
   });
 }
 
+export type ScheduleLabEntry = {
+  id: string;
+  label: string;
+  minuteOfDay: number;
+  timeHHmm: string;
+  bodyText: string;
+  templateName: string;
+  languageCode: string;
+  isActive: boolean;
+  legacySlotKey: LegacySlotKey | null;
+  reportSlotKey: ReportSlotKey | null;
+  reportMandatory: boolean;
+  reportCritical: boolean;
+  reportWeight: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ReportSlotPolicy = {
+  slotKey: ReportSlotKey;
+  label: string;
+  mandatory: boolean;
+  critical: boolean;
+  weight: number;
+  minuteOfDay: number;
+};
+
+const LEGACY_DEFAULT_REPORT_POLICIES: ReportSlotPolicy[] = [
+  { slotKey: "morning", label: "Morning", mandatory: false, critical: false, weight: 0, minuteOfDay: 8 * 60 },
+  { slotKey: "noon", label: "Noon", mandatory: true, critical: false, weight: 1, minuteOfDay: 12 * 60 },
+  { slotKey: "afternoon", label: "Afternoon", mandatory: true, critical: true, weight: 2.5, minuteOfDay: 15 * 60 },
+  { slotKey: "evening", label: "Evening", mandatory: true, critical: true, weight: 3, minuteOfDay: 17 * 60 + 30 },
+];
+
+function minuteToHHmm(minute: number): string {
+  const safe = Math.max(0, Math.min(1439, Math.floor(minute)));
+  const hh = Math.floor(safe / 60);
+  const mm = safe % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function normalizeLegacySlotKeyNullable(value: unknown): LegacySlotKey | null {
+  const text = String(value ?? "").trim();
+  if (text === "morning" || text === "noon" || text === "afternoon" || text === "evening") return text;
+  return null;
+}
+
+function normalizeReportSlotKeyNullable(value: unknown): ReportSlotKey | null {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return null;
+  return text;
+}
+
+function normalizeReportWeight(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 1;
+  if (numeric < 0) return 0;
+  return Number(numeric.toFixed(2));
+}
+
+function mapScheduleLabRow(row: Record<string, unknown>): ScheduleLabEntry {
+  const minuteOfDay = Number(row.minute_of_day ?? 0);
+  const reportSlotKey = normalizeReportSlotKeyNullable(row.report_slot_key);
+  return {
+    id: String(row.id),
+    label: String(row.label ?? ""),
+    minuteOfDay,
+    timeHHmm: minuteToHHmm(minuteOfDay),
+    bodyText: String(row.body_text ?? ""),
+    templateName: String(row.template_name ?? "ceo_template"),
+    languageCode: String(row.language_code ?? "en"),
+    isActive: Boolean(row.is_active),
+    legacySlotKey: normalizeLegacySlotKeyNullable(row.legacy_slot_key),
+    reportSlotKey,
+    reportMandatory: Boolean(row.report_mandatory),
+    reportCritical: Boolean(row.report_critical),
+    reportWeight: reportSlotKey ? normalizeReportWeight(row.report_weight) : 0,
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? ""),
+  };
+}
+
+const SCHEDULE_LAB_SELECT =
+  "id,label,minute_of_day,body_text,template_name,language_code,is_active,legacy_slot_key,report_slot_key,report_mandatory,report_critical,report_weight,created_at,updated_at";
+
+export async function listScheduleLabEntries(): Promise<ScheduleLabEntry[]> {
+  const mode = await getScheduleLabSchemaMode();
+  if (mode === "missing") {
+    throw new Error("schedule_lab_entries table is missing. Run migration 0005_schedule_lab.sql first.");
+  }
+
+  const res = await supabaseAdmin
+    .from("schedule_lab_entries")
+    .select(SCHEDULE_LAB_SELECT)
+    .order("minute_of_day", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  ensureNoError(res.error, "Failed to list schedule lab entries");
+  return ((res.data ?? []) as Record<string, unknown>[]).map(mapScheduleLabRow);
+}
+
+export async function isScheduleLabReady(): Promise<boolean> {
+  return (await getScheduleLabSchemaMode()) === "available";
+}
+
+type UpsertScheduleLabInput = {
+  label: string;
+  minuteOfDay: number;
+  bodyText: string;
+  templateName: string;
+  languageCode: string;
+  isActive: boolean;
+  legacySlotKey: LegacySlotKey | null;
+  reportSlotKey: ReportSlotKey | null;
+  reportMandatory: boolean;
+  reportCritical: boolean;
+  reportWeight: number;
+};
+
+function normalizeScheduleLabPayload(input: UpsertScheduleLabInput) {
+  const reportSlotKey = normalizeReportSlotKeyNullable(input.reportSlotKey);
+  const reportMandatory = reportSlotKey ? input.reportMandatory : false;
+  const reportCritical = reportSlotKey ? input.reportCritical : false;
+  const reportWeight = reportSlotKey
+    ? normalizeReportWeight(input.reportWeight)
+    : 0;
+
+  if (reportCritical && !reportMandatory) {
+    throw new Error("Critical schedule must also be marked mandatory.");
+  }
+
+  return {
+    label: input.label.trim(),
+    minute_of_day: Math.max(0, Math.min(1439, Math.floor(input.minuteOfDay))),
+    body_text: input.bodyText.trim(),
+    template_name: input.templateName.trim() || "ceo_template",
+    language_code: input.languageCode.trim() || "en",
+    is_active: input.isActive,
+    legacy_slot_key: normalizeLegacySlotKeyNullable(input.legacySlotKey),
+    report_slot_key: reportSlotKey,
+    report_mandatory: reportMandatory,
+    report_critical: reportCritical,
+    report_weight: reportWeight,
+  };
+}
+
+export async function createScheduleLabEntry(input: UpsertScheduleLabInput): Promise<ScheduleLabEntry> {
+  const mode = await getScheduleLabSchemaMode();
+  if (mode === "missing") {
+    throw new Error("schedule_lab_entries table is missing. Run migration 0005_schedule_lab.sql first.");
+  }
+
+  const payload = normalizeScheduleLabPayload(input);
+  const res = await supabaseAdmin
+    .from("schedule_lab_entries")
+    .insert(payload)
+    .select(SCHEDULE_LAB_SELECT)
+    .single();
+
+  ensureNoError(res.error, "Failed to create schedule lab entry");
+  return mapScheduleLabRow(must(res.data as Record<string, unknown> | null, "Schedule row missing after insert"));
+}
+
+export async function updateScheduleLabEntry(
+  id: string,
+  patch: Partial<UpsertScheduleLabInput>,
+): Promise<ScheduleLabEntry> {
+  const mode = await getScheduleLabSchemaMode();
+  if (mode === "missing") {
+    throw new Error("schedule_lab_entries table is missing. Run migration 0005_schedule_lab.sql first.");
+  }
+
+  const currentRes = await supabaseAdmin
+    .from("schedule_lab_entries")
+    .select(SCHEDULE_LAB_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+
+  ensureNoError(currentRes.error, "Failed to load schedule lab entry");
+  const current = currentRes.data as Record<string, unknown> | null;
+  if (!current) throw new Error("Schedule not found");
+
+  const mergedInput: UpsertScheduleLabInput = {
+    label: patch.label ?? String(current.label ?? ""),
+    minuteOfDay: patch.minuteOfDay ?? Number(current.minute_of_day ?? 0),
+    bodyText: patch.bodyText ?? String(current.body_text ?? ""),
+    templateName: patch.templateName ?? String(current.template_name ?? "ceo_template"),
+    languageCode: patch.languageCode ?? String(current.language_code ?? "en"),
+    isActive: patch.isActive ?? Boolean(current.is_active),
+    legacySlotKey: patch.legacySlotKey === undefined
+      ? normalizeLegacySlotKeyNullable(current.legacy_slot_key)
+      : patch.legacySlotKey,
+    reportSlotKey: patch.reportSlotKey === undefined
+      ? normalizeReportSlotKeyNullable(current.report_slot_key)
+      : patch.reportSlotKey,
+    reportMandatory: patch.reportMandatory ?? Boolean(current.report_mandatory),
+    reportCritical: patch.reportCritical ?? Boolean(current.report_critical),
+    reportWeight: patch.reportWeight ?? normalizeReportWeight(current.report_weight),
+  };
+
+  const payload = normalizeScheduleLabPayload(mergedInput);
+
+  const res = await supabaseAdmin
+    .from("schedule_lab_entries")
+    .update(payload)
+    .eq("id", id)
+    .select(SCHEDULE_LAB_SELECT)
+    .single();
+
+  ensureNoError(res.error, "Failed to update schedule lab entry");
+  return mapScheduleLabRow(must(res.data as Record<string, unknown> | null, "Schedule row missing after update"));
+}
+
+export async function deleteScheduleLabEntry(id: string): Promise<void> {
+  const mode = await getScheduleLabSchemaMode();
+  if (mode === "missing") {
+    throw new Error("schedule_lab_entries table is missing. Run migration 0005_schedule_lab.sql first.");
+  }
+
+  const res = await supabaseAdmin
+    .from("schedule_lab_entries")
+    .delete()
+    .eq("id", id);
+
+  ensureNoError(res.error, "Failed to delete schedule lab entry");
+}
+
+export async function listDueActiveScheduleLabEntries(minuteOfDay: number): Promise<ScheduleLabEntry[]> {
+  const mode = await getScheduleLabSchemaMode();
+  if (mode === "missing") return [];
+
+  const res = await supabaseAdmin
+    .from("schedule_lab_entries")
+    .select(SCHEDULE_LAB_SELECT)
+    .eq("is_active", true)
+    .eq("minute_of_day", Math.max(0, Math.min(1439, Math.floor(minuteOfDay))))
+    .order("created_at", { ascending: true });
+
+  ensureNoError(res.error, "Failed to list due schedule lab entries");
+  return ((res.data ?? []) as Record<string, unknown>[]).map(mapScheduleLabRow);
+}
+
+export async function getScheduleLabEntryByLegacySlot(
+  slotKey: LegacySlotKey,
+  options?: { includeInactive?: boolean },
+): Promise<ScheduleLabEntry | null> {
+  const mode = await getScheduleLabSchemaMode();
+  if (mode === "missing") return null;
+
+  let query = supabaseAdmin
+    .from("schedule_lab_entries")
+    .select(SCHEDULE_LAB_SELECT)
+    .eq("legacy_slot_key", slotKey)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  if (!options?.includeInactive) {
+    query = query.eq("is_active", true);
+  }
+
+  const res = await query;
+
+  ensureNoError(res.error, "Failed to load schedule entry by legacy slot");
+  const row = (res.data ?? [])[0];
+  return row ? mapScheduleLabRow(row as Record<string, unknown>) : null;
+}
+
+export async function listActiveReportSlotPolicies(): Promise<ReportSlotPolicy[]> {
+  const mode = await getScheduleLabSchemaMode();
+  if (mode === "missing") {
+    return LEGACY_DEFAULT_REPORT_POLICIES;
+  }
+
+  const res = await supabaseAdmin
+    .from("schedule_lab_entries")
+    .select("label,report_slot_key,report_mandatory,report_critical,report_weight,minute_of_day,created_at")
+    .eq("is_active", true)
+    .not("report_slot_key", "is", null)
+    .order("minute_of_day", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  ensureNoError(res.error, "Failed to list active report slot policies");
+
+  const unique = new Map<string, ReportSlotPolicy>();
+  for (const row of (res.data ?? []) as Record<string, unknown>[]) {
+    const slotKey = normalizeReportSlotKeyNullable(row.report_slot_key);
+    if (!slotKey || unique.has(slotKey)) continue;
+
+    unique.set(slotKey, {
+      slotKey,
+      label: String(row.label ?? slotKey).trim() || slotKey,
+      mandatory: Boolean(row.report_mandatory),
+      critical: Boolean(row.report_critical),
+      weight: normalizeReportWeight(row.report_weight),
+      minuteOfDay: Math.max(0, Math.min(1439, Number(row.minute_of_day ?? 0))),
+    });
+  }
+
+  return Array.from(unique.values());
+}
+
 export async function getTemplateBySlot(
-  slotKey: SlotKey,
+  slotKey: LegacySlotKey,
   options?: { includeInactive?: boolean },
 ): Promise<{
-  slot_key: SlotKey;
+  slot_key: LegacySlotKey;
   template_name: string;
   language_code: string;
 } | null> {
@@ -445,7 +775,7 @@ export async function getTemplateBySlot(
   const res = await query.maybeSingle();
 
   ensureNoError(res.error, "Failed to fetch slot template");
-  return (res.data as { slot_key: SlotKey; template_name: string; language_code: string } | null) ?? null;
+  return (res.data as { slot_key: LegacySlotKey; template_name: string; language_code: string } | null) ?? null;
 }
 
 export async function getEmployeesByIds(ids: string[]): Promise<EmployeeRow[]> {

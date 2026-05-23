@@ -1,9 +1,9 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import type { SlotKey } from "@/lib/types";
+import type { LegacySlotKey } from "@/lib/types";
 
-type TemplateKey = SlotKey | "ceo_broadcast_test";
+type TemplateKey = LegacySlotKey | "ceo_broadcast_test";
 
 type Employee = {
   id: string;

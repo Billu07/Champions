@@ -2,16 +2,19 @@
 import { env } from "@/lib/config";
 import { WORKING_DAYS } from "@/lib/constants";
 import { logError, logInfo } from "@/lib/logger";
-import { dhakaDateISO, dhakaDayName, slotForTimestamp } from "@/lib/time";
-import type { SlotKey, WhatsAppInboundMessage } from "@/lib/types";
+import { dhakaDateISO, dhakaDayName, minuteOfDayForTimezone } from "@/lib/time";
+import type { LegacySlotKey, ReportSlotKey, WhatsAppInboundMessage } from "@/lib/types";
 import {
   completeJobRun,
   createJobRun,
   findEmployeeByWhatsAppFrom,
   findMessageEventByWhatsAppMessageId,
+  getScheduleLabEntryByLegacySlot,
   getTemplateBySlot,
   getTrackedEmployees,
   insertMessageEvent,
+  listDueActiveScheduleLabEntries,
+  type ScheduleLabEntry,
   listRecentInboundClassifiedRepliesForEmployee,
   listRecentOutboundPromptEventsForEmployee,
   markMissingForSlot,
@@ -26,11 +29,30 @@ function isWorkingDay(date: Date): boolean {
   return WORKING_DAYS.includes(name);
 }
 
-function previousSlot(slot: SlotKey): { slot: SlotKey; dateOffsetDays: number } {
+function previousSlot(slot: LegacySlotKey): { slot: LegacySlotKey; dateOffsetDays: number } {
   if (slot === "morning") return { slot: "evening", dateOffsetDays: -1 };
   if (slot === "noon") return { slot: "morning", dateOffsetDays: 0 };
   if (slot === "afternoon") return { slot: "noon", dateOffsetDays: 0 };
   return { slot: "afternoon", dateOffsetDays: 0 };
+}
+
+function scheduleBodyParameters(employeeName: string, bodyText: string): Array<{
+  type: "text";
+  text: string;
+  parameterName: string;
+}> {
+  return [
+    {
+      type: "text",
+      parameterName: "employee_name",
+      text: employeeName,
+    },
+    {
+      type: "text",
+      parameterName: "body",
+      text: bodyText.trim(),
+    },
+  ];
 }
 
 function formatInboundFragment(message: WhatsAppInboundMessage): string {
@@ -76,12 +98,13 @@ type InboundReplyClassification = {
   category: InboundReplyCategory;
   linkedOutboundMessageId: string | null;
   linkedOutboundCategory: string | null;
-  slotKey: SlotKey | null;
+  slotKey: ReportSlotKey | null;
   trackingDate: string | null;
   reason: string;
 };
 
 const SCHEDULED_OUTBOUND_CATEGORY = "scheduled_prompt";
+const SCHEDULED_GENERAL_OUTBOUND_CATEGORY = "scheduled_general_prompt";
 const BROADCAST_OUTBOUND_CATEGORY = "ceo_broadcast_template";
 const REPLY_LOOKBACK_HOURS = 18;
 const CONTINUATION_LOOKBACK_MINUTES = 45;
@@ -211,7 +234,7 @@ async function classifyInboundReply(input: {
   };
 }
 
-export async function runScheduledSlot(slot: SlotKey, now = new Date()) {
+async function runLegacyScheduledSlot(slot: LegacySlotKey, now = new Date()) {
   const trackingDate = dhakaDateISO(now, env.NEXT_PUBLIC_APP_TIMEZONE);
   const dayName = dhakaDayName(now, env.NEXT_PUBLIC_APP_TIMEZONE);
   const jobKey = `scheduled:${slot}:${trackingDate}`;
@@ -296,6 +319,166 @@ export async function runScheduledSlot(slot: SlotKey, now = new Date()) {
   }
 }
 
+async function runScheduleLabEntry(entry: ScheduleLabEntry, now = new Date()) {
+  const trackingDate = dhakaDateISO(now, env.NEXT_PUBLIC_APP_TIMEZONE);
+  const dayName = dhakaDayName(now, env.NEXT_PUBLIC_APP_TIMEZONE);
+  const jobKey = `scheduled_lab:${entry.id}:${trackingDate}`;
+
+  if (!(await createJobRun("scheduled_send", jobKey, {
+    scheduleId: entry.id,
+    label: entry.label,
+    minuteOfDay: entry.minuteOfDay,
+    trackingDate,
+    dayName,
+  }))) {
+    return { skipped: true, reason: "duplicate_job" as const, scheduleId: entry.id };
+  }
+
+  try {
+    if (!isWorkingDay(now)) {
+      await completeJobRun(jobKey, "success", "Skipped non-working day");
+      return { skipped: true, reason: "non_working_day" as const, scheduleId: entry.id };
+    }
+
+    const trackedEmployees = await getTrackedEmployees();
+    const employees = filterAllowedEmployees(trackedEmployees);
+
+    if (entry.reportSlotKey) {
+      await markMissingForSlot({
+        trackingDate,
+        slotKey: entry.reportSlotKey,
+        employeeIds: employees.map((employee) => employee.id),
+      });
+    }
+
+    const category = entry.reportSlotKey ? SCHEDULED_OUTBOUND_CATEGORY : SCHEDULED_GENERAL_OUTBOUND_CATEGORY;
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const employee of employees) {
+      try {
+        const response = await sendDynamicTemplateMessage({
+          toE164: employee.whatsapp_e164,
+          templateName: entry.templateName,
+          languageCode: entry.languageCode,
+          bodyParameters: scheduleBodyParameters(employee.full_name, entry.bodyText),
+        });
+
+        await insertMessageEvent({
+          employeeId: employee.id,
+          direction: "outbound",
+          category,
+          slotKey: entry.reportSlotKey,
+          trackingDate: entry.reportSlotKey ? trackingDate : null,
+          whatsappMessageId: response.id ?? null,
+          payload: {
+            scheduleId: entry.id,
+            scheduleLabel: entry.label,
+            minuteOfDay: entry.minuteOfDay,
+            template: entry.templateName,
+            language: entry.languageCode,
+            reportSlotKey: entry.reportSlotKey,
+            reportMandatory: entry.reportMandatory,
+            reportCritical: entry.reportCritical,
+            reportWeight: entry.reportWeight,
+          },
+          messageText: `[schedule] ${entry.label}`,
+        });
+
+        sent += 1;
+      } catch (error) {
+        failed += 1;
+        logError("Schedule lab send failed for employee", {
+          employeeId: employee.id,
+          scheduleId: entry.id,
+          scheduleLabel: entry.label,
+          trackingDate,
+          error: (error as Error).message,
+        });
+      }
+    }
+
+    const testNote = isWhatsAppTestAllowlistEnabled() ? `,test_allowlist=${employees.length}` : "";
+    await completeJobRun(jobKey, "success", `sent=${sent},failed=${failed}${testNote}`);
+    return { skipped: false, sent, failed, scheduleId: entry.id };
+  } catch (error) {
+    await completeJobRun(jobKey, "failed", (error as Error).message);
+    throw error;
+  }
+}
+
+export async function runDueScheduleLabDispatch(now = new Date()) {
+  const minuteOfDay = minuteOfDayForTimezone(now, env.NEXT_PUBLIC_APP_TIMEZONE);
+  const dueSchedules = await listDueActiveScheduleLabEntries(minuteOfDay);
+
+  if (dueSchedules.length === 0) {
+    return {
+      ok: true,
+      minuteOfDay,
+      due: 0,
+      sent: 0,
+      failed: 0,
+      skipped: 0,
+      schedules: [] as Array<{ scheduleId: string; label: string }>,
+    };
+  }
+
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+  const schedules: Array<{ scheduleId: string; label: string }> = [];
+
+  for (const schedule of dueSchedules) {
+    schedules.push({ scheduleId: schedule.id, label: schedule.label });
+    const result = await runScheduleLabEntry(schedule, now);
+    if (result.skipped) {
+      skipped += 1;
+      continue;
+    }
+    sent += Number(result.sent ?? 0);
+    failed += Number(result.failed ?? 0);
+  }
+
+  return {
+    ok: true,
+    minuteOfDay,
+    due: dueSchedules.length,
+    sent,
+    failed,
+    skipped,
+    schedules,
+  };
+}
+
+export async function runScheduledSlot(slot: LegacySlotKey, now = new Date()) {
+  const mapped = await getScheduleLabEntryByLegacySlot(slot, { includeInactive: true });
+  if (!mapped) {
+    return runLegacyScheduledSlot(slot, now);
+  }
+
+  if (!mapped.isActive) {
+    return {
+      skipped: true as const,
+      reason: "schedule_lab_legacy_slot_inactive" as const,
+      scheduleId: mapped.id,
+    };
+  }
+
+  const currentMinute = minuteOfDayForTimezone(now, env.NEXT_PUBLIC_APP_TIMEZONE);
+  if (currentMinute !== mapped.minuteOfDay) {
+    return {
+      skipped: true as const,
+      reason: "schedule_lab_time_mismatch" as const,
+      scheduleId: mapped.id,
+      expectedMinute: mapped.minuteOfDay,
+      currentMinute,
+    };
+  }
+
+  return runScheduleLabEntry(mapped, now);
+}
+
 export async function processInboundWebhookPayload(payload: Record<string, unknown>) {
   const messages = extractMessages(payload);
 
@@ -309,8 +492,6 @@ export async function processInboundWebhookPayload(payload: Record<string, unkno
     }
 
     const incomingDate = new Date(Number(message.timestamp) * 1000);
-    const inboundTrackingDate = dhakaDateISO(incomingDate, env.NEXT_PUBLIC_APP_TIMEZONE);
-    const inboundSlotKey = slotForTimestamp(incomingDate, env.NEXT_PUBLIC_APP_TIMEZONE);
     const receivedAtIso = incomingDate.toISOString();
 
     const employee = await findEmployeeByWhatsAppFrom(message.from);
@@ -322,9 +503,11 @@ export async function processInboundWebhookPayload(payload: Record<string, unkno
       receivedAtIso,
     });
 
-    const scheduledTrackingDate = classification.trackingDate ?? inboundTrackingDate;
-    const scheduledSlotKey = classification.slotKey ?? inboundSlotKey;
-    const shouldMergeIntoSlot = classification.category === "scheduled_reply";
+    const scheduledTrackingDate = classification.trackingDate;
+    const scheduledSlotKey = classification.slotKey;
+    const shouldMergeIntoSlot =
+      classification.category === "scheduled_reply" &&
+      Boolean(scheduledTrackingDate && scheduledSlotKey);
 
     await insertMessageEvent({
       employeeId: employee?.id ?? null,
@@ -353,6 +536,11 @@ export async function processInboundWebhookPayload(payload: Record<string, unkno
     }
 
     if (!shouldMergeIntoSlot) {
+      ignored += 1;
+      continue;
+    }
+
+    if (!scheduledTrackingDate || !scheduledSlotKey) {
       ignored += 1;
       continue;
     }

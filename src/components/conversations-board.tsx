@@ -16,7 +16,7 @@ type ConversationMessageEvent = {
   employeeId: string | null;
   direction: "inbound" | "outbound";
   category: string;
-  slotKey: "morning" | "noon" | "afternoon" | "evening" | null;
+  slotKey: string | null;
   trackingDate: string | null;
   whatsappMessageId: string | null;
   messageText: string | null;
@@ -81,6 +81,7 @@ function shortTime(value: string): string {
 function familyForCategory(category: string): Exclude<ThreadFamily, "all"> {
   if (
     category === "scheduled_prompt" ||
+    category === "scheduled_general_prompt" ||
     category === "scheduled_reply" ||
     category === "scheduled_test_prompt"
   ) {
@@ -111,6 +112,7 @@ function eventSnippet(event: ConversationMessageEvent): string {
   if (text) return text;
 
   if (event.category === "scheduled_prompt") return "Scheduled template sent";
+  if (event.category === "scheduled_general_prompt") return "Scheduled custom prompt sent";
   if (event.category === "ceo_broadcast_template") return "CEO broadcast sent";
   if (event.category === "scheduled_reply") return "Scheduled reply received";
   if (event.category === "broadcast_reply") return "Broadcast reply received";
@@ -131,6 +133,7 @@ function bubbleText(event: ConversationMessageEvent): string {
   if (text) return text;
 
   if (event.category === "scheduled_prompt") return "Scheduled template sent";
+  if (event.category === "scheduled_general_prompt") return "Scheduled custom prompt sent";
   if (event.category === "ceo_broadcast_template") return "CEO broadcast template sent";
   if (event.category === "scheduled_reply") return "Scheduled reply received";
   if (event.category === "broadcast_reply") return "Broadcast reply received";

@@ -144,7 +144,7 @@ function extractRiskRows(report: Report): Array<{ name: string; score: string }>
   const atRisk = asArray(metrics.atRiskMembers);
   return atRisk.slice(0, 8).map((row) => ({
     name: asString(row.employeeName) || asString(row.employeeId),
-    score: `${pct(asNumber(row.weightedPerformancePct))} | Critical ${asNumber(row.criticalSlotsReplied)}/${asNumber(row.criticalSlotsExpected || 2)}`,
+    score: `${pct(asNumber(row.weightedPerformancePct))} | Critical ${asNumber(row.criticalSlotsReplied)}/${asNumber(row.criticalSlotsExpected)}`,
   }));
 }
 

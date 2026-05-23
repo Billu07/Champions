@@ -10,7 +10,7 @@ import {
 } from "@/lib/repository";
 import { scheduledBodyParameters } from "@/lib/scheduled-template";
 import { dhakaDateISO } from "@/lib/time";
-import type { SlotKey } from "@/lib/types";
+import type { LegacySlotKey } from "@/lib/types";
 import { sendDynamicTemplateMessage } from "@/lib/whatsapp";
 import { filterAllowedEmployees } from "@/lib/whatsapp-test-allowlist";
 
@@ -276,7 +276,7 @@ async function executeDueSchedule(
         template_name: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
         language_code: "en",
       }
-    : await getTemplateBySlot(payload.templateKey as SlotKey, { includeInactive: true });
+    : await getTemplateBySlot(payload.templateKey as LegacySlotKey, { includeInactive: true });
 
   if (!template) {
     await updateJobRunCompletion({
@@ -298,7 +298,7 @@ async function executeDueSchedule(
             },
           ]
         : scheduledBodyParameters(
-            payload.templateKey as SlotKey,
+            payload.templateKey as LegacySlotKey,
             employee.full_name,
             payload.morningBodyText || env.WHATSAPP_MORNING_TEMPLATE_BODY,
           );
@@ -314,7 +314,7 @@ async function executeDueSchedule(
         employeeId: employee.id,
         direction: "outbound",
         category: isCeoBroadcastTest ? "scheduled_test_ceo_broadcast" : "scheduled_test_prompt",
-        slotKey: isCeoBroadcastTest ? null : (payload.templateKey as SlotKey),
+        slotKey: isCeoBroadcastTest ? null : (payload.templateKey as LegacySlotKey),
         trackingDate,
         whatsappMessageId: response.id ?? null,
         payload: {
