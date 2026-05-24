@@ -161,16 +161,19 @@ function truncate(value: string, max = 84): string {
 }
 
 export function ConversationsBoard({ initialEmployees, initialEvents }: ConversationsBoardProps) {
+  const [events, setEvents] = useState<ConversationMessageEvent[]>(initialEvents);
   const [search, setSearch] = useState("");
   const [familyFilter, setFamilyFilter] = useState<ThreadFamily>("all");
   const [selectedThreadKey, setSelectedThreadKey] = useState("");
+  const [deletingThread, setDeletingThread] = useState(false);
+  const [status, setStatus] = useState("");
 
   const employeesById = useMemo(() => {
     return new Map(initialEmployees.map((employee) => [employee.id, employee]));
   }, [initialEmployees]);
 
   const threads = useMemo(() => {
-    const eventsSorted = [...initialEvents].sort((a, b) => safeDate(b.occurredAt) - safeDate(a.occurredAt));
+    const eventsSorted = [...events].sort((a, b) => safeDate(b.occurredAt) - safeDate(a.occurredAt));
     const map = new Map<string, ThreadSummary>();
 
     for (const event of eventsSorted) {
@@ -230,7 +233,7 @@ export function ConversationsBoard({ initialEmployees, initialEvents }: Conversa
         events: [...thread.events].sort((a, b) => safeDate(a.occurredAt) - safeDate(b.occurredAt)),
       }))
       .sort((a, b) => safeDate(b.lastAt) - safeDate(a.lastAt));
-  }, [employeesById, initialEvents]);
+  }, [employeesById, events]);
 
   const filteredThreads = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -267,6 +270,51 @@ export function ConversationsBoard({ initialEmployees, initialEvents }: Conversa
     [filteredThreads, effectiveSelectedThreadKey],
   );
 
+  async function onDeleteSelectedThread() {
+    if (!selectedThread || deletingThread) return;
+
+    const eventIds = Array.from(new Set(selectedThread.events.map((event) => event.id).filter(Boolean)));
+    if (eventIds.length === 0) {
+      setStatus("No events found for this conversation.");
+      return;
+    }
+
+    const warning = selectedThread.familyCounts.scheduled > 0
+      ? " This includes scheduled message history and can impact future reply linking for this member."
+      : "";
+
+    const confirmed = window.confirm(
+      `Delete conversation for "${selectedThread.label}" with ${eventIds.length} events? This cannot be undone.${warning}`,
+    );
+    if (!confirmed) return;
+
+    setDeletingThread(true);
+    setStatus("Deleting conversation...");
+
+    try {
+      const res = await fetch("/api/conversations/thread", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eventIds }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatus((json as { error?: string }).error ?? "Failed to delete conversation.");
+        return;
+      }
+
+      const removedSet = new Set(eventIds);
+      setEvents((prev) => prev.filter((event) => !removedSet.has(event.id)));
+      setSelectedThreadKey("");
+      setStatus(`Conversation deleted (${eventIds.length} events removed).`);
+    } catch {
+      setStatus("Network error while deleting conversation.");
+    } finally {
+      setDeletingThread(false);
+    }
+  }
+
   return (
     <section className="grid conversations-board" style={{ gap: 14 }}>
       <article className="card grid conversations-toolbar" style={{ gap: 10 }}>
@@ -274,6 +322,7 @@ export function ConversationsBoard({ initialEmployees, initialEvents }: Conversa
           <h2>WhatsApp Conversations</h2>
           <span className="pill">Threads: {filteredThreads.length}</span>
         </div>
+        {status ? <p className="muted" style={{ margin: 0 }}>{status}</p> : null}
 
         <div className="row">
           <label className="col-6 grid" style={{ gap: 6 }}>
@@ -350,6 +399,14 @@ export function ConversationsBoard({ initialEmployees, initialEvents }: Conversa
                   <span className="pill">Total {selectedThread.totalCount}</span>
                   <span className="pill">Inbound {selectedThread.inboundCount}</span>
                   <span className="pill">Outbound {selectedThread.outboundCount}</span>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => void onDeleteSelectedThread()}
+                    disabled={deletingThread}
+                  >
+                    {deletingThread ? "Deleting..." : "Delete Conversation"}
+                  </button>
                 </div>
               </div>
 

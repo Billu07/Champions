@@ -54,6 +54,8 @@ type CustomerImportSummary = {
   };
 };
 
+type XlsxRow = Array<unknown>;
+
 const defaultForm = {
   id: "",
   fullName: "",
@@ -67,6 +69,27 @@ const defaultForm = {
   aliases: "",
   notes: "",
 };
+
+function toCsvCell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const text = value instanceof Date ? value.toISOString() : String(value);
+  const normalized = text.replace(/\r\n?/g, "\n");
+  if (!/[",\n]/.test(normalized)) return normalized;
+  return `"${normalized.replace(/"/g, "\"\"")}"`;
+}
+
+function rowsToCsv(rows: XlsxRow[]): string {
+  return rows
+    .map((row) => row.map((cell) => toCsvCell(cell)).join(","))
+    .join("\n");
+}
+
+function detectUploadType(fileName: string): "csv" | "xlsx" | null {
+  const lower = fileName.trim().toLowerCase();
+  if (lower.endsWith(".csv")) return "csv";
+  if (lower.endsWith(".xlsx")) return "xlsx";
+  return null;
+}
 
 export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManagerProps) {
   const [employees, setEmployees] = useState<Employee[]>(initialEmployees);
@@ -274,6 +297,16 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
     const file = event.target.files?.[0];
     if (!file) return;
 
+    const fileType = detectUploadType(file.name);
+    if (!fileType) {
+      setCustomerImportMessage("Only .xlsx and .csv files are allowed.");
+      setCustomerCsvText("");
+      setCustomerCsvFileName("");
+      setCustomerImportSummary(null);
+      if (customerFileRef.current) customerFileRef.current.value = "";
+      return;
+    }
+
     const maxBytes = 2_000_000;
     if (file.size > maxBytes) {
       setCustomerImportMessage("File is too large. Keep it under 2MB.");
@@ -284,7 +317,23 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
     }
 
     try {
-      const text = await file.text();
+      let text = "";
+      if (fileType === "csv") {
+        text = await file.text();
+      } else {
+        setCustomerImportMessage(`Reading ${file.name}...`);
+        const excelModule = await import("read-excel-file/browser");
+        const rows = (await excelModule.readSheet(file)) as XlsxRow[];
+        if (!rows.length) {
+          setCustomerImportMessage("No rows found in the XLSX file.");
+          setCustomerCsvText("");
+          setCustomerCsvFileName("");
+          setCustomerImportSummary(null);
+          return;
+        }
+        text = rowsToCsv(rows);
+      }
+
       setCustomerCsvText(text);
       setCustomerCsvFileName(file.name);
       setCustomerImportSummary(null);
@@ -537,14 +586,14 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
         <p className="muted">
           Required fields: <strong>full_name</strong>, <strong>whatsapp_number</strong>. Optional fields:{" "}
           <strong>customer_segment</strong>, <strong>area</strong>, <strong>notes</strong>. Number format must be{" "}
-          <strong>+8801xxxxxxxxx</strong>.
+          <strong>+8801xxxxxxxxx</strong>. Approved upload formats: <strong>.xlsx</strong> and <strong>.csv</strong> only.
         </p>
 
         <div className="inline customer-import-controls">
           <input
             ref={customerFileRef}
             type="file"
-            accept=".csv,text/csv"
+            accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             onChange={(event) => void onCustomerFileChange(event)}
           />
 

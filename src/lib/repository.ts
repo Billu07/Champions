@@ -1062,6 +1062,27 @@ export async function listConversationMessageEvents(limit = 800): Promise<Conver
   return (res.data ?? []).map((row) => mapConversationMessageEvent(row as Record<string, unknown>));
 }
 
+export async function deleteConversationMessageEventsByIds(eventIds: string[]): Promise<number> {
+  const ids = Array.from(new Set(eventIds.map((id) => id.trim()).filter(Boolean)));
+  if (ids.length === 0) return 0;
+
+  const chunkSize = 400;
+  let deleted = 0;
+
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const batch = ids.slice(i, i + chunkSize);
+    const res = await supabaseAdmin
+      .from("message_events")
+      .delete()
+      .in("id", batch);
+
+    ensureNoError(res.error, "Failed to delete conversation events");
+    deleted += batch.length;
+  }
+
+  return deleted;
+}
+
 function buildMergedText(previous: string | null, incoming: string): string {
   if (!previous || !previous.trim()) return incoming;
   return `${previous.trim()}\n---\n${incoming.trim()}`;

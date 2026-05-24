@@ -26,6 +26,35 @@ type SlotPolicy = {
   minuteOfDay: number;
 };
 
+type SlotSemanticCategory =
+  | "morning_optional"
+  | "noon_update"
+  | "afternoon_progress"
+  | "evening_summary"
+  | "general_mandatory";
+
+type SemanticCriterionResult = {
+  key: string;
+  label: string;
+  weight: number;
+  satisfied: boolean;
+};
+
+type SlotSemanticInsight = {
+  slot: ReportSlotKey;
+  label: string;
+  category: SlotSemanticCategory;
+  scorePct: number;
+  qualityScorePct: number;
+  evidenceScorePct: number;
+  criteria: SemanticCriterionResult[];
+  highlights: string[];
+  gaps: string[];
+  replyLength: number;
+  numericSignals: number;
+  keywordSignals: number;
+};
+
 type SlotResponseRow = {
   employee_id: string;
   tracking_date: string;
@@ -63,6 +92,17 @@ type EmployeeDailyMetrics = {
     repliedSlots: number;
     missingSlots: number;
     morningReplyReceived: boolean;
+    semanticScorePct: number;
+    semanticPriorityScorePct: number;
+    semanticQualityScorePct: number;
+    semanticEvidenceScorePct: number;
+    performanceScorePct: number;
+  };
+  semanticOverview: {
+    scoringNote: string;
+    prioritySlots: ReportSlotKey[];
+    priorityExpectedWeight: number;
+    priorityEarnedWeight: number;
   };
   slotBreakdown: Array<{
     slot: ReportSlotKey;
@@ -75,6 +115,7 @@ type EmployeeDailyMetrics = {
     firstReplyAt: string | null;
     lastReplyAt: string | null;
     snippet: string | null;
+    semantic: SlotSemanticInsight | null;
   }>;
 };
 
@@ -89,6 +130,13 @@ type EmployeePeriodMetrics = {
   weightedExpected: number;
   weightedEarned: number;
   weightedPerformancePct: number;
+  semanticExpected: number;
+  semanticEarned: number;
+  semanticScorePct: number;
+  semanticPriorityExpected: number;
+  semanticPriorityEarned: number;
+  semanticPriorityScorePct: number;
+  performanceScorePct: number;
   totalReplyFragments: number;
   slotMatrix: Record<ReportSlotKey, { expected: number; replied: number; missing: number }>;
 };
@@ -204,6 +252,287 @@ function buildPolicyMap(slotPolicies: SlotPolicy[]): Map<ReportSlotKey, SlotPoli
   return new Map(slotPolicies.map((policy) => [policy.key, policy]));
 }
 
+const BANGLA_DIGIT_TO_ASCII: Record<string, string> = {
+  "০": "0",
+  "১": "1",
+  "২": "2",
+  "৩": "3",
+  "৪": "4",
+  "৫": "5",
+  "৬": "6",
+  "৭": "7",
+  "৮": "8",
+  "৯": "9",
+};
+
+function normalizeDigits(input: string): string {
+  return input.replace(/[০-৯]/g, (digit) => BANGLA_DIGIT_TO_ASCII[digit] ?? digit);
+}
+
+function normalizeSemanticText(input: string): string {
+  return normalizeDigits(input)
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function countNumericSignals(input: string): number {
+  const numbers = normalizeDigits(input).match(/\b\d+(?:[.,]\d+)?\b/g) ?? [];
+  return numbers.length;
+}
+
+function countKeywordSignals(input: string, keywords: string[]): number {
+  const source = normalizeSemanticText(input);
+  let hits = 0;
+  for (const keyword of keywords) {
+    if (!keyword.trim()) continue;
+    if (source.includes(normalizeSemanticText(keyword))) hits += 1;
+  }
+  return hits;
+}
+
+function hasAnyKeyword(input: string, keywords: string[]): boolean {
+  return countKeywordSignals(input, keywords) > 0;
+}
+
+type SemanticCriterionDefinition = {
+  key: string;
+  label: string;
+  weight: number;
+  check: (text: string, numericSignals: number) => boolean;
+};
+
+function semanticCategoryForPolicy(policy: SlotPolicy): SlotSemanticCategory {
+  const key = policy.key.toLowerCase();
+  const label = policy.label.toLowerCase();
+  const source = `${key} ${label}`;
+
+  if (source.includes("morning")) return "morning_optional";
+  if (source.includes("noon") || source.includes("midday") || source.includes("location")) return "noon_update";
+  if (source.includes("afternoon") || source.includes("progress")) return "afternoon_progress";
+  if (source.includes("evening") || source.includes("late") || source.includes("eod")) return "evening_summary";
+  return "general_mandatory";
+}
+
+function semanticPriorityWeight(policy: SlotPolicy): number {
+  const category = semanticCategoryForPolicy(policy);
+  if (!policy.mandatory) return 0;
+  if (category === "noon_update") return Number(Math.max(policy.weight, 1.8).toFixed(2));
+  if (category === "afternoon_progress") return Number(Math.max(policy.weight, 2.8).toFixed(2));
+  if (category === "evening_summary") return Number(Math.max(policy.weight, 3.2).toFixed(2));
+  if (policy.critical) return Number(Math.max(policy.weight, 2.2).toFixed(2));
+  return Number(Math.max(policy.weight, 1).toFixed(2));
+}
+
+function semanticBaseWeight(policy: SlotPolicy): number {
+  if (!policy.mandatory) return 0;
+  return Number(Math.max(policy.weight, 1).toFixed(2));
+}
+
+function isSemanticPrioritySlot(policy: SlotPolicy): boolean {
+  const category = semanticCategoryForPolicy(policy);
+  return category === "noon_update" || category === "afternoon_progress" || category === "evening_summary" || policy.critical;
+}
+
+function criteriaForCategory(category: SlotSemanticCategory): SemanticCriterionDefinition[] {
+  const locationKeywords = [
+    "লোকেশন",
+    "location",
+    "এলাকা",
+    "area",
+    "জায়গা",
+    "জায়গা",
+    "route",
+    "মুভমেন্ট",
+  ];
+  const liveLocationKeywords = [
+    "live location",
+    "লাইভ লোকেশন",
+    "লাইভ",
+    "location share",
+    "share",
+    "পিন",
+    "pin",
+    "map",
+    "ম্যাপ",
+  ];
+  const customerKeywords = [
+    "customer",
+    "client",
+    "কাস্টমার",
+    "ক্লায়েন্ট",
+    "ক্লায়েন্ট",
+    "visit",
+    "ভিজিট",
+    "follow",
+    "ফলোআপ",
+  ];
+
+  if (category === "noon_update") {
+    return [
+      {
+        key: "location_update",
+        label: "Current location updated",
+        weight: 32,
+        check: (text) => hasAnyKeyword(text, locationKeywords),
+      },
+      {
+        key: "live_location",
+        label: "Live location/share mentioned",
+        weight: 34,
+        check: (text) => hasAnyKeyword(text, liveLocationKeywords),
+      },
+      {
+        key: "coverage_signal",
+        label: "Field movement / coverage mentioned",
+        weight: 22,
+        check: (text) => hasAnyKeyword(text, ["movement", "মুভ", "coverage", "কভার", "field", "ফিল্ড", "ভিজিট"]),
+      },
+      {
+        key: "data_signal",
+        label: "Includes concrete data point",
+        weight: 12,
+        check: (_text, numericSignals) => numericSignals > 0,
+      },
+    ];
+  }
+
+  if (category === "afternoon_progress") {
+    return [
+      {
+        key: "lunch_status",
+        label: "Lunch/health status mentioned",
+        weight: 14,
+        check: (text) => hasAnyKeyword(text, ["lunch", "খাবার", "খেয়েছি", "খেয়েছি", "খাইনি", "খাওয়া", "খাওয়া"]),
+      },
+      {
+        key: "progress_update",
+        label: "Work progress described",
+        weight: 24,
+        check: (text) => hasAnyKeyword(text, ["progress", "অগ্রগতি", "প্রগতি", "done", "complete", "চলছে", "হয়েছে", "হয়েছে"]),
+      },
+      {
+        key: "customer_coverage",
+        label: "Customer visit/follow-up count mentioned",
+        weight: 30,
+        check: (text, numericSignals) => numericSignals > 0 && hasAnyKeyword(text, customerKeywords),
+      },
+      {
+        key: "blocker_signal",
+        label: "Issue/blocker or support request noted",
+        weight: 20,
+        check: (text) => hasAnyKeyword(text, ["issue", "problem", "সমস্যা", "বাধা", "technical", "টেকনিক্যাল", "help", "support"]),
+      },
+      {
+        key: "next_step",
+        label: "Next action / plan signal present",
+        weight: 12,
+        check: (text) => hasAnyKeyword(text, ["next", "plan", "পরবর্তী", "প্ল্যান", "করবো", "করব", "continue", "আগাবো"]),
+      },
+    ];
+  }
+
+  if (category === "evening_summary") {
+    return [
+      {
+        key: "visit_summary",
+        label: "Visit/follow-up summary with quantity",
+        weight: 30,
+        check: (text, numericSignals) => numericSignals > 0 && hasAnyKeyword(text, customerKeywords),
+      },
+      {
+        key: "lead_po_signal",
+        label: "Lead / PO / promising client update included",
+        weight: 30,
+        check: (text) => hasAnyKeyword(text, ["lead", "লিড", "po", "order", "deal", "promising", "prospect", "client"]),
+      },
+      {
+        key: "best_highlight",
+        label: "Best achievement/highlight included",
+        weight: 18,
+        check: (text) => hasAnyKeyword(text, ["best", "ভালো", "ভাল", "গুরুত্বপূর্ণ", "highlight", "achievement", "success"]),
+      },
+      {
+        key: "tomorrow_improvement",
+        label: "Tomorrow improvement/focus mentioned",
+        weight: 22,
+        check: (text) => hasAnyKeyword(text, ["tomorrow", "আগামীকাল", "improve", "ইমপ্রুভ", "উন্নতি", "focus", "পরিকল্পনা"]),
+      },
+    ];
+  }
+
+  return [
+    {
+      key: "specific_update",
+      label: "Specific work update present",
+      weight: 55,
+      check: (text) => hasAnyKeyword(text, ["visit", "meeting", "customer", "client", "update", "কাস্টমার", "আপডেট"]),
+    },
+    {
+      key: "data_signal",
+      label: "Contains measurable detail",
+      weight: 25,
+      check: (_text, numericSignals) => numericSignals > 0,
+    },
+    {
+      key: "next_action",
+      label: "Includes actionable next step",
+      weight: 20,
+      check: (text) => hasAnyKeyword(text, ["next", "plan", "follow", "আগামী", "প্ল্যান", "পরবর্তী"]),
+    },
+  ];
+}
+
+function evaluateSlotSemantic(policy: SlotPolicy, row: SlotResponseRow | undefined): SlotSemanticInsight | null {
+  if (!row || row.is_missing) return null;
+
+  const text = String(row.merged_text ?? "").trim();
+  if (!text) return null;
+
+  const category = semanticCategoryForPolicy(policy);
+  const criteriaDefs = criteriaForCategory(category);
+  const numericSignals = countNumericSignals(text);
+
+  const criteria: SemanticCriterionResult[] = criteriaDefs.map((criterion) => ({
+    key: criterion.key,
+    label: criterion.label,
+    weight: criterion.weight,
+    satisfied: criterion.check(text, numericSignals),
+  }));
+
+  const totalWeight = criteria.reduce((sum, item) => sum + item.weight, 0);
+  const earnedWeight = criteria.filter((item) => item.satisfied).reduce((sum, item) => sum + item.weight, 0);
+  const baseScorePct = toPct(earnedWeight, totalWeight);
+
+  const normalizedText = normalizeSemanticText(text);
+  const keywordSignals = criteria.filter((item) => item.satisfied).length;
+  const wordCount = normalizedText.split(/\s+/).filter(Boolean).length;
+  const structureBonus = Math.min(8, Math.floor(wordCount / 18) * 2);
+  const numericBonus = Math.min(7, numericSignals * 2);
+  const scorePct = Math.min(100, Number((baseScorePct + structureBonus + numericBonus).toFixed(2)));
+
+  const evidenceScorePct = Number(Math.min(100, baseScorePct + Math.min(15, numericSignals * 5)).toFixed(2));
+  const qualityScorePct = Number(Math.min(100, baseScorePct + structureBonus).toFixed(2));
+
+  const highlights = criteria.filter((item) => item.satisfied).map((item) => item.label);
+  const gaps = criteria.filter((item) => !item.satisfied).map((item) => item.label);
+
+  return {
+    slot: policy.key,
+    label: policy.label,
+    category,
+    scorePct,
+    qualityScorePct,
+    evidenceScorePct,
+    criteria,
+    highlights,
+    gaps,
+    replyLength: text.length,
+    numericSignals,
+    keywordSignals,
+  };
+}
+
 function resolveEmployeeName(row: SlotResponseRow | undefined): string {
   if (!row?.employees) return "Unknown";
   if (Array.isArray(row.employees)) return row.employees[0]?.full_name ?? "Unknown";
@@ -288,6 +617,7 @@ function buildDailyEmployeeMetrics(
     const replyCount = Number(row?.reply_count ?? 0);
     const replied = row ? !row.is_missing : false;
     const snippet = row?.merged_text?.trim() ? row.merged_text.trim().slice(0, 220) : null;
+    const semantic = evaluateSlotSemantic(policy, row);
 
     return {
       slot: policy.key,
@@ -300,6 +630,7 @@ function buildDailyEmployeeMetrics(
       firstReplyAt: row?.first_reply_at ?? null,
       lastReplyAt: row?.last_reply_at ?? null,
       snippet,
+      semantic,
     };
   });
 
@@ -327,8 +658,48 @@ function buildDailyEmployeeMetrics(
   const repliedSlots = slotBreakdown.filter((slot) => slot.replied).length;
   const missingSlots = slotBreakdown.length - repliedSlots;
 
+  let semanticExpected = 0;
+  let semanticEarned = 0;
+  let semanticPriorityExpected = 0;
+  let semanticPriorityEarned = 0;
+  let semanticQualityWeighted = 0;
+  let semanticEvidenceWeighted = 0;
+
+  for (const slot of slotBreakdown) {
+    const policy = slotPolicies.find((item) => item.key === slot.slot);
+    if (!policy || !policy.mandatory) continue;
+
+    const baseWeight = semanticBaseWeight(policy);
+    semanticExpected += baseWeight;
+    const semanticScore = slot.semantic?.scorePct ?? 0;
+    semanticEarned += (semanticScore / 100) * baseWeight;
+    semanticQualityWeighted += ((slot.semantic?.qualityScorePct ?? 0) / 100) * baseWeight;
+    semanticEvidenceWeighted += ((slot.semantic?.evidenceScorePct ?? 0) / 100) * baseWeight;
+
+    if (isSemanticPrioritySlot(policy)) {
+      const priorityWeight = semanticPriorityWeight(policy);
+      semanticPriorityExpected += priorityWeight;
+      semanticPriorityEarned += (semanticScore / 100) * priorityWeight;
+    }
+  }
+
+  semanticExpected = Number(semanticExpected.toFixed(2));
+  semanticEarned = Number(semanticEarned.toFixed(2));
+  semanticPriorityExpected = Number(semanticPriorityExpected.toFixed(2));
+  semanticPriorityEarned = Number(semanticPriorityEarned.toFixed(2));
+
+  const semanticScorePct = toPct(semanticEarned, semanticExpected);
+  const semanticPriorityScorePct = toPct(semanticPriorityEarned, semanticPriorityExpected);
+  const semanticQualityScorePct = toPct(semanticQualityWeighted, semanticExpected);
+  const semanticEvidenceScorePct = toPct(semanticEvidenceWeighted, semanticExpected);
+  const performanceScorePct = Number(
+    (semanticPriorityScorePct * 0.55 + toPct(weightedEarned, weightedExpected) * 0.45).toFixed(2),
+  );
+
+  const prioritySlots = slotPolicies.filter((policy) => policy.mandatory && isSemanticPrioritySlot(policy)).map((policy) => policy.key);
+
   return {
-    reportVersion: 3,
+    reportVersion: 4,
     period: {
       type: "daily",
       startDate: reportDate,
@@ -352,6 +723,18 @@ function buildDailyEmployeeMetrics(
       repliedSlots,
       missingSlots,
       morningReplyReceived: Boolean(slotBreakdown.find((slot) => slot.slot === "morning")?.replied),
+      semanticScorePct,
+      semanticPriorityScorePct,
+      semanticQualityScorePct,
+      semanticEvidenceScorePct,
+      performanceScorePct,
+    },
+    semanticOverview: {
+      scoringNote:
+        "Performance combines mandatory-slot compliance with semantic quality of noon/afternoon/evening updates.",
+      prioritySlots,
+      priorityExpectedWeight: semanticPriorityExpected,
+      priorityEarnedWeight: semanticPriorityEarned,
     },
     slotBreakdown,
   };
@@ -373,6 +756,8 @@ function buildPeriodEmployeeMetrics(
 
   let totalReplyFragments = 0;
   let weightedEarned = 0;
+  let semanticEarned = 0;
+  let semanticPriorityEarned = 0;
 
   for (const row of rows) {
     const slot = normalizeSlotKey(row.slot_key);
@@ -394,6 +779,12 @@ function buildPeriodEmployeeMetrics(
       slotMatrix[slot].replied += 1;
       if (policy?.mandatory) {
         weightedEarned += policy.weight;
+        const semantic = evaluateSlotSemantic(policy, row);
+        const semanticScore = semantic?.scorePct ?? 0;
+        semanticEarned += (semanticScore / 100) * semanticBaseWeight(policy);
+        if (isSemanticPrioritySlot(policy)) {
+          semanticPriorityEarned += (semanticScore / 100) * semanticPriorityWeight(policy);
+        }
       }
     } else {
       slotMatrix[slot].missing += 1;
@@ -423,6 +814,19 @@ function buildPeriodEmployeeMetrics(
 
   const mandatoryWeightTotal = mandatoryPolicies.reduce((sum, policy) => sum + policy.weight, 0);
   const weightedExpected = Number((periodDays * mandatoryWeightTotal).toFixed(2));
+  const semanticExpected = Number(
+    mandatoryPolicies.reduce((sum, policy) => sum + (slotMatrix[policy.key]?.expected ?? periodDays) * semanticBaseWeight(policy), 0).toFixed(2),
+  );
+  const priorityPolicies = mandatoryPolicies.filter((policy) => isSemanticPrioritySlot(policy));
+  const semanticPriorityExpected = Number(
+    priorityPolicies.reduce((sum, policy) => sum + (slotMatrix[policy.key]?.expected ?? periodDays) * semanticPriorityWeight(policy), 0).toFixed(2),
+  );
+  semanticEarned = Number(semanticEarned.toFixed(2));
+  semanticPriorityEarned = Number(semanticPriorityEarned.toFixed(2));
+  const semanticScorePct = toPct(semanticEarned, semanticExpected);
+  const semanticPriorityScorePct = toPct(semanticPriorityEarned, semanticPriorityExpected);
+  const weightedPerformancePct = toPct(weightedEarned, weightedExpected);
+  const performanceScorePct = Number((semanticPriorityScorePct * 0.55 + weightedPerformancePct * 0.45).toFixed(2));
 
   return {
     employeeId,
@@ -434,7 +838,14 @@ function buildPeriodEmployeeMetrics(
     criticalSlotsReplied,
     weightedExpected,
     weightedEarned: Number(weightedEarned.toFixed(2)),
-    weightedPerformancePct: toPct(weightedEarned, weightedExpected),
+    weightedPerformancePct,
+    semanticExpected,
+    semanticEarned,
+    semanticScorePct,
+    semanticPriorityExpected,
+    semanticPriorityEarned,
+    semanticPriorityScorePct,
+    performanceScorePct,
     totalReplyFragments,
     slotMatrix,
   };
@@ -453,6 +864,12 @@ function buildTeamDailyMetrics(
 
   const slotSummary = slotPolicies.map((policy) => {
     const replied = employees.filter((item) => item.slotBreakdown.find((detail) => detail.slot === policy.key)?.replied).length;
+    const semanticValues = employees
+      .map((item) => item.slotBreakdown.find((detail) => detail.slot === policy.key)?.semantic?.scorePct ?? null)
+      .filter((value): value is number => typeof value === "number");
+    const semanticAveragePct = semanticValues.length
+      ? Number((semanticValues.reduce((sum, value) => sum + value, 0) / semanticValues.length).toFixed(2))
+      : 0;
     const expected = membersTracked;
     return {
       slot: policy.key,
@@ -464,6 +881,7 @@ function buildTeamDailyMetrics(
       replied,
       missing: Math.max(expected - replied, 0),
       compliancePct: toPct(replied, expected),
+      semanticAveragePct,
     };
   });
 
@@ -472,14 +890,32 @@ function buildTeamDailyMetrics(
         (employees.reduce((sum, item) => sum + item.summary.weightedPerformancePct, 0) / membersTracked).toFixed(2),
       )
     : 0;
+  const averageSemantic = membersTracked
+    ? Number(
+        (employees.reduce((sum, item) => sum + item.summary.semanticScorePct, 0) / membersTracked).toFixed(2),
+      )
+    : 0;
+  const averageSemanticPriority = membersTracked
+    ? Number(
+        (employees.reduce((sum, item) => sum + item.summary.semanticPriorityScorePct, 0) / membersTracked).toFixed(2),
+      )
+    : 0;
+  const averagePerformance = membersTracked
+    ? Number(
+        (employees.reduce((sum, item) => sum + item.summary.performanceScorePct, 0) / membersTracked).toFixed(2),
+      )
+    : 0;
 
   const criticalPerfectCount = employees.filter(
     (item) => item.summary.criticalSlotsReplied === item.summary.criticalSlotsExpected,
   ).length;
 
   const atRiskMembers = employees
-    .filter((item) => item.summary.criticalSlotsReplied < item.summary.criticalSlotsExpected)
-    .sort((a, b) => a.summary.weightedPerformancePct - b.summary.weightedPerformancePct)
+    .filter((item) =>
+      item.summary.criticalSlotsReplied < item.summary.criticalSlotsExpected ||
+      item.summary.performanceScorePct < 65,
+    )
+    .sort((a, b) => a.summary.performanceScorePct - b.summary.performanceScorePct)
     .slice(0, 12)
     .map((item) => ({
       employeeId: item.employee.id,
@@ -487,10 +923,12 @@ function buildTeamDailyMetrics(
       criticalSlotsReplied: item.summary.criticalSlotsReplied,
       criticalSlotsExpected: item.summary.criticalSlotsExpected,
       weightedPerformancePct: item.summary.weightedPerformancePct,
+      semanticPriorityScorePct: item.summary.semanticPriorityScorePct,
+      performanceScorePct: item.summary.performanceScorePct,
     }));
 
   return {
-    reportVersion: 3,
+    reportVersion: 4,
     period: {
       type: "daily",
       startDate: reportDate,
@@ -508,6 +946,9 @@ function buildTeamDailyMetrics(
       criticalPerfectCount,
       criticalCompliancePct: toPct(criticalPerfectCount, membersTracked),
       averageWeightedPerformancePct: averageWeighted,
+      averageSemanticScorePct: averageSemantic,
+      averageSemanticPriorityScorePct: averageSemanticPriority,
+      averagePerformanceScorePct: averagePerformance,
       totalReplyFragments: employees.reduce((sum, item) => sum + item.summary.totalReplyFragments, 0),
       morningParticipationPct: toPct(
         employees.filter((item) => item.summary.morningReplyReceived).length,
@@ -551,6 +992,21 @@ function buildTeamPeriodMetrics(input: {
         (input.members.reduce((sum, member) => sum + member.weightedPerformancePct, 0) / membersTracked).toFixed(2),
       )
     : 0;
+  const averageSemantic = membersTracked
+    ? Number(
+        (input.members.reduce((sum, member) => sum + member.semanticScorePct, 0) / membersTracked).toFixed(2),
+      )
+    : 0;
+  const averageSemanticPriority = membersTracked
+    ? Number(
+        (input.members.reduce((sum, member) => sum + member.semanticPriorityScorePct, 0) / membersTracked).toFixed(2),
+      )
+    : 0;
+  const averagePerformance = membersTracked
+    ? Number(
+        (input.members.reduce((sum, member) => sum + member.performanceScorePct, 0) / membersTracked).toFixed(2),
+      )
+    : 0;
 
   const criticalSlotCount = input.slotPolicies.filter((policy) => policy.critical).length;
   const criticalExpectedPerMember = input.periodDays * criticalSlotCount;
@@ -560,8 +1016,11 @@ function buildTeamPeriodMetrics(input: {
   ).length;
 
   const atRiskMembers = input.members
-    .filter((member) => member.criticalSlotsReplied < criticalExpectedPerMember)
-    .sort((a, b) => a.weightedPerformancePct - b.weightedPerformancePct)
+    .filter((member) =>
+      member.criticalSlotsReplied < criticalExpectedPerMember ||
+      member.performanceScorePct < 65,
+    )
+    .sort((a, b) => a.performanceScorePct - b.performanceScorePct)
     .slice(0, 15)
     .map((member) => ({
       employeeId: member.employeeId,
@@ -569,21 +1028,25 @@ function buildTeamPeriodMetrics(input: {
       criticalSlotsReplied: member.criticalSlotsReplied,
       criticalSlotsExpected: member.criticalSlotsExpected,
       weightedPerformancePct: member.weightedPerformancePct,
+      semanticPriorityScorePct: member.semanticPriorityScorePct,
+      performanceScorePct: member.performanceScorePct,
     }));
 
   const topPerformers = [...input.members]
-    .sort((a, b) => b.weightedPerformancePct - a.weightedPerformancePct)
+    .sort((a, b) => b.performanceScorePct - a.performanceScorePct)
     .slice(0, 8)
     .map((member) => ({
       employeeId: member.employeeId,
       employeeName: member.employeeName,
+      performanceScorePct: member.performanceScorePct,
       weightedPerformancePct: member.weightedPerformancePct,
+      semanticPriorityScorePct: member.semanticPriorityScorePct,
       criticalSlotsReplied: member.criticalSlotsReplied,
       criticalSlotsExpected: member.criticalSlotsExpected,
     }));
 
   return {
-    reportVersion: 3,
+    reportVersion: 4,
     period: {
       type: input.kind === "team_weekly" ? "weekly" : "monthly",
       startDate: input.startDate,
@@ -601,6 +1064,9 @@ function buildTeamPeriodMetrics(input: {
       slotRowsCaptured: input.totalRows,
       totalReplyFragments: input.members.reduce((sum, member) => sum + member.totalReplyFragments, 0),
       averageWeightedPerformancePct: averageWeighted,
+      averageSemanticScorePct: averageSemantic,
+      averageSemanticPriorityScorePct: averageSemanticPriority,
+      averagePerformanceScorePct: averagePerformance,
       criticalPerfectCount,
       criticalPerfectPct: toPct(criticalPerfectCount, membersTracked),
     },
@@ -616,6 +1082,8 @@ function fallbackIndividualNarrative(metrics: EmployeeDailyMetrics, policyInstru
     `Critical compliance: ${metrics.summary.criticalSlotsReplied}/${metrics.summary.criticalSlotsExpected} (${metrics.summary.criticalCompliancePct}%).`,
     `Mandatory compliance: ${metrics.summary.mandatorySlotsReplied}/${metrics.summary.mandatorySlotsExpected} (${metrics.summary.mandatoryCompliancePct}%).`,
     `Weighted performance: ${metrics.summary.weightedPerformancePct}%.`,
+    `Semantic priority quality: ${metrics.summary.semanticPriorityScorePct}% (noon + afternoon + evening focus).`,
+    `Final performance score: ${metrics.summary.performanceScorePct}%.`,
     policyInstruction,
   ].join(" ");
 }
@@ -627,6 +1095,8 @@ function fallbackTeamNarrative(reportDate: string, metrics: Record<string, unkno
     `Tracked members: ${Number(kpi.membersTracked ?? 0)}.`,
     `Critical-perfect members: ${Number(kpi.criticalPerfectCount ?? 0)} (${Number(kpi.criticalCompliancePct ?? 0)}%).`,
     `Average weighted performance: ${Number(kpi.averageWeightedPerformancePct ?? 0)}%.`,
+    `Average semantic priority quality: ${Number(kpi.averageSemanticPriorityScorePct ?? 0)}%.`,
+    `Average final performance score: ${Number(kpi.averagePerformanceScorePct ?? 0)}%.`,
     policyInstruction,
   ].join(" ");
 }
@@ -641,6 +1111,8 @@ function fallbackPeriodNarrative(
     `${title}.`,
     `Tracked members: ${Number(kpi.membersTracked ?? 0)}.`,
     `Average weighted performance: ${Number(kpi.averageWeightedPerformancePct ?? 0)}%.`,
+    `Average semantic priority quality: ${Number(kpi.averageSemanticPriorityScorePct ?? 0)}%.`,
+    `Average final performance score: ${Number(kpi.averagePerformanceScorePct ?? 0)}%.`,
     `Critical-perfect share: ${Number(kpi.criticalPerfectPct ?? 0)}%.`,
     policyInstruction,
   ].join(" ");
@@ -742,7 +1214,7 @@ export async function generateDailyReports(reportDate: string) {
       narrative = await summarizeReport(
         `Daily individual report for ${employeeName} (${reportDate})`,
         metrics,
-        `Write in English. Keep this concise and operational. ${policyInstruction}`,
+        `Write in English. Keep this concise and operational. Evaluate response quality, business signal strength, and next-day coaching focus. ${policyInstruction}`,
       );
     } catch (error) {
       failures.push({
@@ -792,7 +1264,7 @@ export async function generateDailyReports(reportDate: string) {
     teamNarrative = await summarizeReport(
       `Team daily report for ${reportDate}`,
       teamMetrics,
-      `Write in English for CEO-level review. Highlight compliance risks and operational actions. ${policyInstruction}`,
+      `Write in English for CEO-level review. Highlight compliance risks, semantic data quality gaps, and operational actions. ${policyInstruction}`,
     );
   } catch (error) {
     failures.push({ reason: `Team AI summary failed: ${(error as Error).message}` });
@@ -856,7 +1328,7 @@ export async function generateWeeklyReport(anchorDate: Date) {
     endDate: range.end,
     title: `Team weekly executive summary - ${range.start} to ${range.end}`,
     aiInstruction:
-      "Write in English as an executive weekly summary. Include concrete risks and next-week actions.",
+      "Write in English as an executive weekly summary. Include semantic quality trend, concrete risks, and next-week actions.",
   });
 }
 
@@ -868,6 +1340,6 @@ export async function generateMonthlyReport(anchorDate: Date) {
     endDate: range.end,
     title: `Team monthly executive summary - ${range.start} to ${range.end}`,
     aiInstruction:
-      "Write in English as a monthly executive review. Prioritize compliance trend, structural risks, and corrective actions for next month.",
+      "Write in English as a monthly executive review. Prioritize compliance trend, semantic quality trend, structural risks, and corrective actions for next month.",
   });
 }

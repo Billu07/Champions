@@ -84,6 +84,14 @@ function summaryRowsForReport(report: Report): Array<{ label: string; value: str
         value: pct(asNumber(summary.weightedPerformancePct)),
       },
       {
+        label: "Semantic Priority",
+        value: pct(asNumber(summary.semanticPriorityScorePct)),
+      },
+      {
+        label: "Final Performance",
+        value: pct(asNumber(summary.performanceScorePct)),
+      },
+      {
         label: "Reply Fragments",
         value: String(asNumber(summary.totalReplyFragments)),
       },
@@ -92,6 +100,8 @@ function summaryRowsForReport(report: Report): Array<{ label: string; value: str
 
   const membersTracked = asNumber(kpi.membersTracked || metrics.members || metrics.totalMembers);
   const avgWeighted = asNumber(kpi.averageWeightedPerformancePct || metrics.replyRate);
+  const avgSemanticPriority = asNumber(kpi.averageSemanticPriorityScorePct);
+  const avgFinal = asNumber(kpi.averagePerformanceScorePct);
   const criticalPerfect = asNumber(kpi.criticalPerfectCount || kpi.criticalCompliancePct || 0);
   const fragments = asNumber(kpi.totalReplyFragments || metrics.teamReplies || metrics.totalReplies || 0);
 
@@ -102,6 +112,8 @@ function summaryRowsForReport(report: Report): Array<{ label: string; value: str
       value: report.kind === "team_daily" ? String(criticalPerfect) : pct(asNumber(kpi.criticalPerfectPct)),
     },
     { label: "Avg Weighted Performance", value: pct(avgWeighted) },
+    { label: "Avg Semantic Priority", value: pct(avgSemanticPriority) },
+    { label: "Avg Final Performance", value: pct(avgFinal) },
     { label: "Reply Fragments", value: String(fragments) },
   ];
 }
@@ -113,6 +125,7 @@ function extractSlotRows(report: Report): Array<{
   missing: number;
   compliancePct: number;
   critical: boolean;
+  semanticScorePct: number | null;
 }> {
   const metrics = asRecord(report.metrics);
 
@@ -125,6 +138,7 @@ function extractSlotRows(report: Report): Array<{
       missing: slot.replied ? 0 : 1,
       compliancePct: slot.replied ? 100 : 0,
       critical: Boolean(slot.critical),
+      semanticScorePct: slot.semantic ? asNumber(asRecord(slot.semantic).scorePct) : null,
     }));
   }
 
@@ -136,6 +150,7 @@ function extractSlotRows(report: Report): Array<{
     missing: asNumber(slot.missing),
     compliancePct: asNumber(slot.compliancePct),
     critical: Boolean(slot.critical),
+    semanticScorePct: typeof slot.semanticAveragePct === "number" ? asNumber(slot.semanticAveragePct) : null,
   }));
 }
 
@@ -144,7 +159,11 @@ function extractRiskRows(report: Report): Array<{ name: string; score: string }>
   const atRisk = asArray(metrics.atRiskMembers);
   return atRisk.slice(0, 8).map((row) => ({
     name: asString(row.employeeName) || asString(row.employeeId),
-    score: `${pct(asNumber(row.weightedPerformancePct))} | Critical ${asNumber(row.criticalSlotsReplied)}/${asNumber(row.criticalSlotsExpected)}`,
+    score:
+      `Final ${pct(asNumber(row.performanceScorePct) || asNumber(row.weightedPerformancePct))}` +
+      ` | Semantic ${pct(asNumber(row.semanticPriorityScorePct))}` +
+      ` | Weighted ${pct(asNumber(row.weightedPerformancePct))}` +
+      ` | Critical ${asNumber(row.criticalSlotsReplied)}/${asNumber(row.criticalSlotsExpected)}`,
   }));
 }
 
@@ -152,6 +171,25 @@ function lastAutoTableY(doc: unknown, fallback: number): number {
   const candidate = doc as { lastAutoTable?: { finalY?: number } };
   const y = candidate.lastAutoTable?.finalY;
   return typeof y === "number" ? y : fallback;
+}
+
+function sanitizeFilename(value: string): string {
+  return value.replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_").slice(0, 120);
+}
+
+function fileDateStamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toISOString().slice(0, 10);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Failed to read logo"));
+    reader.readAsDataURL(blob);
+  });
 }
 
 export function ReportsBoard({ initialReports, brandName, brandTagline }: ReportsBoardProps) {
@@ -163,6 +201,7 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
+  const [exportingReportId, setExportingReportId] = useState<string | null>(null);
 
   const pageSize = 15;
 
@@ -188,12 +227,19 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
     setStatus(`Loaded ${rows.length} reports.`);
   }
 
-  async function exportReportsPdf(rows: Report[]) {
-    if (rows.length === 0) {
-      setStatus("No reports to export.");
-      return;
+  async function loadBrandLogoDataUrl(): Promise<string | null> {
+    try {
+      const res = await fetch("/brand/logo-c.png", { cache: "force-cache" });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return blobToDataUrl(blob);
+    } catch {
+      return null;
     }
+  }
 
+  async function exportSingleReportPdf(report: Report) {
+    setExportingReportId(report.id);
     setExporting(true);
     setStatus("Generating branded PDF...");
 
@@ -202,6 +248,7 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
         import("jspdf"),
         import("jspdf-autotable"),
       ]);
+      const logoDataUrl = await loadBrandLogoDataUrl();
 
       const doc = new jsPDF({ unit: "pt", format: "a4" });
       const pageWidth = doc.internal.pageSize.getWidth();
@@ -217,94 +264,92 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
       };
 
       doc.setFillColor(15, 76, 129);
-      doc.rect(0, 0, pageWidth, 66, "F");
+      doc.rect(0, 0, pageWidth, 68, "F");
       doc.setTextColor(255, 255, 255);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(17);
-      doc.text(`${brandName} Reports`, margin, 30);
+      doc.text(`${brandName} Report`, margin, 30);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(11);
       doc.text(brandTagline, margin, 48);
+
+      if (logoDataUrl) {
+        try {
+          doc.addImage(logoDataUrl, "PNG", pageWidth - margin - 112, 12, 92, 46);
+        } catch {
+          // Keep export resilient even if logo decoding fails.
+        }
+      }
+
       doc.setTextColor(16, 24, 40);
-      y = 84;
+      y = 88;
 
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.text(report.title, margin, y);
+      y += 16;
+
+      doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
+      doc.setTextColor(71, 84, 103);
+      doc.text(
+        `${KIND_LABEL[report.kind]} | ${report.report_date} | Model: ${report.model_name}${resolveEmployeeName(report) ? ` | ${resolveEmployeeName(report)}` : ""}`,
+        margin,
+        y,
+      );
+      y += 14;
+
       doc.text(`Generated: ${new Date().toLocaleString()}`, margin, y);
-      doc.text(`Total reports: ${rows.length}`, pageWidth - margin, y, { align: "right" });
-      y += 20;
+      y += 14;
 
-      for (const [index, report] of rows.entries()) {
-        ensureSpace(90);
-        if (index > 0) {
-          doc.setDrawColor(224, 231, 239);
-          doc.line(margin, y, pageWidth - margin, y);
-          y += 14;
-        }
+      doc.setTextColor(16, 24, 40);
+      const narrativeLines = doc.splitTextToSize(report.narrative, pageWidth - margin * 2);
+      ensureSpace(narrativeLines.length * 12 + 10);
+      doc.text(narrativeLines, margin, y);
+      y += narrativeLines.length * 12 + 8;
 
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(13);
-        doc.text(report.title, margin, y);
-        y += 14;
+      const kpiRows = summaryRowsForReport(report).map((item) => [item.label, item.value]);
+      autoTable(doc, {
+        startY: y,
+        margin: { left: margin, right: margin },
+        theme: "grid",
+        styles: { fontSize: 9, cellPadding: 5 },
+        headStyles: { fillColor: [15, 76, 129] },
+        head: [["KPI", "Value"]],
+        body: kpiRows,
+      });
+      y = lastAutoTableY(doc, y + 50) + 8;
 
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(10);
-        doc.setTextColor(71, 84, 103);
-        doc.text(
-          `${KIND_LABEL[report.kind]} | ${report.report_date} | Model: ${report.model_name}${resolveEmployeeName(report) ? ` | ${resolveEmployeeName(report)}` : ""}`,
-          margin,
-          y,
-        );
-        y += 14;
+      const slotRows = extractSlotRows(report);
+      autoTable(doc, {
+        startY: y,
+        margin: { left: margin, right: margin },
+        theme: "grid",
+        styles: { fontSize: 9, cellPadding: 5 },
+        headStyles: { fillColor: [53, 81, 110] },
+        head: [["Slot", "Expected", "Replied", "Missing", "Compliance", "Semantic"]],
+        body: slotRows.map((slot) => [
+          `${slot.label}${slot.critical ? " (critical)" : ""}`,
+          String(slot.expected),
+          String(slot.replied),
+          String(slot.missing),
+          pct(slot.compliancePct),
+          slot.semanticScorePct === null ? "-" : pct(slot.semanticScorePct),
+        ]),
+      });
+      y = lastAutoTableY(doc, y + 70) + 8;
 
-        doc.setTextColor(16, 24, 40);
-        const narrativeLines = doc.splitTextToSize(report.narrative, pageWidth - margin * 2);
-        ensureSpace(narrativeLines.length * 12 + 10);
-        doc.text(narrativeLines, margin, y);
-        y += narrativeLines.length * 12 + 8;
-
-        const kpiRows = summaryRowsForReport(report).map((item) => [item.label, item.value]);
+      const risks = extractRiskRows(report);
+      if (risks.length > 0) {
         autoTable(doc, {
           startY: y,
           margin: { left: margin, right: margin },
           theme: "grid",
           styles: { fontSize: 9, cellPadding: 5 },
-          headStyles: { fillColor: [15, 76, 129] },
-          head: [["KPI", "Value"]],
-          body: kpiRows,
+          headStyles: { fillColor: [180, 35, 24] },
+          head: [["At-Risk Member", "Score"]],
+          body: risks.map((risk) => [risk.name, risk.score]),
         });
-        y = lastAutoTableY(doc, y + 50) + 8;
-
-        const slotRows = extractSlotRows(report);
-        autoTable(doc, {
-          startY: y,
-          margin: { left: margin, right: margin },
-          theme: "grid",
-          styles: { fontSize: 9, cellPadding: 5 },
-          headStyles: { fillColor: [53, 81, 110] },
-          head: [["Slot", "Expected", "Replied", "Missing", "Compliance"]],
-          body: slotRows.map((slot) => [
-            `${slot.label}${slot.critical ? " (critical)" : ""}`,
-            String(slot.expected),
-            String(slot.replied),
-            String(slot.missing),
-            pct(slot.compliancePct),
-          ]),
-        });
-        y = lastAutoTableY(doc, y + 70) + 8;
-
-        const risks = extractRiskRows(report);
-        if (risks.length > 0) {
-          autoTable(doc, {
-            startY: y,
-            margin: { left: margin, right: margin },
-            theme: "grid",
-            styles: { fontSize: 9, cellPadding: 5 },
-            headStyles: { fillColor: [180, 35, 24] },
-            head: [["At-Risk Member", "Score"]],
-            body: risks.map((risk) => [risk.name, risk.score]),
-          });
-          y = lastAutoTableY(doc, y + 50) + 10;
-        }
       }
 
       const pageCount = doc.getNumberOfPages();
@@ -315,14 +360,14 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
         doc.text(`Page ${i} of ${pageCount}`, pageWidth - margin, pageHeight - 14, { align: "right" });
       }
 
-      const dateKey = new Date().toISOString().slice(0, 10);
-      const fileName = `${brandName.replace(/\s+/g, "_").toLowerCase()}_reports_${dateKey}.pdf`;
+      const fileName = `${sanitizeFilename(brandName)}_${sanitizeFilename(report.kind)}_${fileDateStamp(report.report_date)}_${sanitizeFilename(report.title)}.pdf`;
       doc.save(fileName);
       setStatus("Branded PDF exported.");
     } catch (error) {
       setStatus(`PDF export failed: ${(error as Error).message}`);
     } finally {
       setExporting(false);
+      setExportingReportId(null);
     }
   }
 
@@ -408,11 +453,10 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
         <div className="inline" style={{ justifyContent: "space-between" }}>
           <div className="inline">
             <button onClick={() => void loadReports()}>Apply Filters</button>
-            <button className="ghost" onClick={() => void exportReportsPdf(filteredReports)} disabled={exporting}>
-              {exporting ? "Exporting..." : "Download Branded PDF"}
-            </button>
           </div>
-          <span className="muted">{status}</span>
+          <span className="muted">
+            {status || "Each report is exported as a separate branded PDF from its own card."}
+          </span>
         </div>
       </article>
 
@@ -461,7 +505,17 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
           <article className="card" key={report.id}>
             <div className="inline" style={{ justifyContent: "space-between" }}>
               <h2>{report.title}</h2>
-              <span className="pill">{KIND_LABEL[report.kind]}</span>
+              <div className="inline">
+                <span className="pill">{KIND_LABEL[report.kind]}</span>
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={() => void exportSingleReportPdf(report)}
+                  disabled={exporting}
+                >
+                  {exportingReportId === report.id ? "Exporting..." : "Download Branded PDF"}
+                </button>
+              </div>
             </div>
             <p>
               Date: {formatDate(report.report_date)} | Generated: {new Date(report.created_at).toLocaleString()} | Model: {report.model_name}
@@ -487,6 +541,7 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
                       <th>Replied</th>
                       <th>Missing</th>
                       <th>Compliance</th>
+                      <th>Semantic</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -497,10 +552,11 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
                         <td>{slot.replied}</td>
                         <td>{slot.missing}</td>
                         <td>{pct(slot.compliancePct)}</td>
+                        <td>{slot.semanticScorePct === null ? "-" : pct(slot.semanticScorePct)}</td>
                       </tr>
                     )) : (
                       <tr>
-                        <td colSpan={5}>No slot detail available for this legacy report row.</td>
+                        <td colSpan={6}>No slot detail available for this legacy report row.</td>
                       </tr>
                     )}
                   </tbody>
