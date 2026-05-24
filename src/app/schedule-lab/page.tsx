@@ -22,9 +22,7 @@ export default async function ScheduleLabPage() {
     <main className="page">
       <AdminNav />
       <h1>Schedule Lab</h1>
-      <p>
-        Build, activate, and manage custom scheduled prompts in Bangladesh timezone without hardcoded fixed slots.
-      </p>
+      <p>Create and manage scheduled messages.</p>
       <ScheduleLabConsole initialSchedules={initialSchedules} initialError={initialError} />
     </main>
   );

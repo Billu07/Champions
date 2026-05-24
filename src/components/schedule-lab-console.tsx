@@ -10,7 +10,6 @@ type ScheduleEntry = {
   minuteOfDay: number;
   timeHHmm: string;
   bodyText: string;
-  languageCode: string;
   isActive: boolean;
   legacySlotKey: ScheduleSlot | null;
   reportSlotKey: string | null;
@@ -37,7 +36,6 @@ const defaultForm = {
   label: "",
   timeHHmm: "08:00",
   bodyText: "",
-  languageCode: "en",
   isActive: true,
   reportSlotKey: "",
   reportMandatory: true,
@@ -67,7 +65,7 @@ function scheduleSort(a: ScheduleEntry, b: ScheduleEntry): number {
 
 export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleLabConsoleProps) {
   const [schedules, setSchedules] = useState<ScheduleEntry[]>([...initialSchedules].sort(scheduleSort));
-  const [status, setStatus] = useState(initialError ?? "Manage schedule dispatch in Asia/Dhaka timezone.");
+  const [status, setStatus] = useState(initialError ?? "");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<string>("");
@@ -105,7 +103,6 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
       label: form.label.trim(),
       timeHHmm: form.timeHHmm,
       bodyText: form.bodyText.trim(),
-      languageCode: form.languageCode.trim() || "en",
       isActive: form.isActive,
       reportSlotKey: form.reportSlotKey ? normalizeReportSlotInput(form.reportSlotKey) : null,
       reportMandatory: form.reportMandatory,
@@ -138,7 +135,6 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
       label: item.label,
       timeHHmm: item.timeHHmm,
       bodyText: item.bodyText,
-      languageCode: item.languageCode,
       isActive: item.isActive,
       reportSlotKey: item.reportSlotKey ?? "",
       reportMandatory: item.reportMandatory,
@@ -156,7 +152,6 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
       label: editForm.label.trim(),
       timeHHmm: editForm.timeHHmm,
       bodyText: editForm.bodyText.trim(),
-      languageCode: editForm.languageCode.trim() || "en",
       isActive: editForm.isActive,
       reportSlotKey: editForm.reportSlotKey ? normalizeReportSlotInput(editForm.reportSlotKey) : null,
       reportMandatory: editForm.reportMandatory,
@@ -239,16 +234,13 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
             </button>
           </div>
         </div>
-        <p className="muted" style={{ margin: "8px 0 0" }}>
-          Use the CEO template format ({`Hi {employee_name}, {body}`}) for all schedule messages.
-        </p>
-        <p className="muted" style={{ margin: "6px 0 0" }}>{status}</p>
+        {status ? <p className="muted" style={{ margin: "8px 0 0" }}>{status}</p> : null}
       </article>
 
       <form className="card grid schedule-lab-create" style={{ gap: 10 }} onSubmit={onCreate}>
         <h2>Create Schedule</h2>
         <div className="row">
-          <label className="col-5 grid" style={{ gap: 6 }}>
+          <label className="col-6 grid" style={{ gap: 6 }}>
             <span>Label</span>
             <input
               className="input"
@@ -265,15 +257,6 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
               type="time"
               value={form.timeHHmm}
               onChange={(event) => setForm((prev) => ({ ...prev, timeHHmm: event.target.value }))}
-              required
-            />
-          </label>
-          <label className="col-4 grid" style={{ gap: 6 }}>
-            <span>Language Code</span>
-            <input
-              className="input"
-              value={form.languageCode}
-              onChange={(event) => setForm((prev) => ({ ...prev, languageCode: event.target.value }))}
               required
             />
           </label>
