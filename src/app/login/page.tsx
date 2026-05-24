@@ -28,7 +28,7 @@ export default async function LoginPage({
           <span className="login-brand-pill">Secure Leadership Access</span>
         </div>
         <h1>CEO Login</h1>
-        <p>Sign in with the admin username and password from Vercel environment variables.</p>
+        <p>Sign in with your assigned admin username and password.</p>
 
         <form method="post" action="/api/auth/login" className="grid" style={{ gap: 12 }}>
           <label className="grid" style={{ gap: 6 }}>
