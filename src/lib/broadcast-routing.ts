@@ -109,6 +109,10 @@ function dedupeIds(ids: string[]): string[] {
   return Array.from(new Set(ids));
 }
 
+function normalizeTextForDedupe(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 function employeeHasAnyTag(employee: EmployeeLike, tagKeys: string[]): boolean {
   const set = new Set((employee.tags ?? []).map((tag) => tag.key));
   return tagKeys.some((key) => set.has(key));
@@ -284,17 +288,45 @@ export async function buildBroadcastPreview(
   const audienceHint = input.audienceCategory === "custom"
     ? (recipients.length > 0 ? `Custom recipients (${recipients.length})` : "Custom recipients from AI targeting")
     : audienceLabel(input.audienceCategory);
-  const shouldSkipDraftAi = isQuotaError(aiRouteResult.meta.error) || isTransientAiConnectivityError(aiRouteResult.meta.error);
+
+  const hasStrongAiRouteDraft =
+    input.useAiRouting &&
+    aiRoutes.length > 0 &&
+    !aiRouteResult.meta.usedFallback &&
+    !input.aiRegenerateInstruction?.trim() &&
+    !input.preferInstructionMode;
+
+  const routeDraftMessages = dedupeIds(
+    previewRoutes
+      .filter((route) => (route.source === "ai_group" || route.source === "ai_person") && route.recipientEmployeeIds.length > 0)
+      .map((route) => normalizeTextForDedupe(route.instruction))
+      .filter(Boolean),
+  );
+
+  const routeDraftText = routeDraftMessages.length <= 1
+    ? (routeDraftMessages[0] ?? "")
+    : routeDraftMessages.join("\n");
+
+  const shouldSkipDraftAi = hasStrongAiRouteDraft ||
+    isQuotaError(aiRouteResult.meta.error) ||
+    isTransientAiConnectivityError(aiRouteResult.meta.error);
+
   const draftResult = shouldSkipDraftAi
     ? {
-        text: input.aiRegenerateInstruction?.trim() ? (input.previousDraft?.trim() || input.message.trim()) : input.message.trim(),
-        mode: input.aiRegenerateInstruction?.trim() ? "regenerate" as const : "rewrite" as const,
+        text: hasStrongAiRouteDraft
+          ? (routeDraftText || input.message.trim())
+          : (input.aiRegenerateInstruction?.trim() ? (input.previousDraft?.trim() || input.message.trim()) : input.message.trim()),
+        mode: hasStrongAiRouteDraft
+          ? "compose" as const
+          : (input.aiRegenerateInstruction?.trim() ? "regenerate" as const : "rewrite" as const),
         detectedInstruction: Boolean(input.preferInstructionMode),
         meta: {
-          usedFallback: true,
-          error: isQuotaError(aiRouteResult.meta.error)
-            ? "Skipped message drafting because AI quota is currently exceeded"
-            : "Skipped message drafting because AI connectivity is unstable right now",
+          usedFallback: !hasStrongAiRouteDraft,
+          error: hasStrongAiRouteDraft
+            ? null
+            : isQuotaError(aiRouteResult.meta.error)
+              ? "Skipped message drafting because AI quota is currently exceeded"
+              : "Skipped message drafting because AI connectivity is unstable right now",
         },
       }
     : await buildCeoBroadcastDraftWithMeta({
