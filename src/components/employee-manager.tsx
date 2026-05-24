@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
+import { buildCustomerImportCsvTemplate } from "@/lib/customer-import";
 
 type Tag = {
   id?: string;
@@ -26,6 +27,31 @@ type Employee = {
 type EmployeeManagerProps = {
   initialEmployees: Employee[];
   initialTags: Tag[];
+};
+
+type CustomerImportIssue = {
+  rowNumber: number;
+  field: string;
+  message: string;
+  value?: string;
+};
+
+type CustomerImportSummary = {
+  dryRun: boolean;
+  totalDataRows: number;
+  validRows: number;
+  wouldInsert: number;
+  wouldUpdate: number;
+  imported?: number;
+  inserted?: number;
+  updated?: number;
+  failed?: number;
+  skipped: number;
+  issues: {
+    items: CustomerImportIssue[];
+    total: number;
+    truncated: boolean;
+  };
 };
 
 const defaultForm = {
@@ -60,7 +86,14 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
   const [loading, setLoading] = useState(false);
   const [newTagKey, setNewTagKey] = useState("");
   const [newTagLabel, setNewTagLabel] = useState("");
+  const [customerCsvText, setCustomerCsvText] = useState("");
+  const [customerCsvFileName, setCustomerCsvFileName] = useState("");
+  const [customerImportSummary, setCustomerImportSummary] = useState<CustomerImportSummary | null>(null);
+  const [customerImportMessage, setCustomerImportMessage] = useState("");
+  const [customerValidating, setCustomerValidating] = useState(false);
+  const [customerImporting, setCustomerImporting] = useState(false);
   const editorRef = useRef<HTMLFormElement | null>(null);
+  const customerFileRef = useRef<HTMLInputElement | null>(null);
 
   const editing = Boolean(form.id);
   const effectiveBulkTag = bulkTag === "all" || tags.some((tag) => tag.key === bulkTag)
@@ -222,6 +255,98 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
     setNewTagLabel("");
     setMessage("Tag saved.");
     await load();
+  }
+
+  function downloadCustomerTemplate(): void {
+    const csv = buildCustomerImportCsvTemplate();
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "customers-upload-template.csv";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function onCustomerFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const maxBytes = 2_000_000;
+    if (file.size > maxBytes) {
+      setCustomerImportMessage("File is too large. Keep it under 2MB.");
+      setCustomerCsvText("");
+      setCustomerCsvFileName("");
+      setCustomerImportSummary(null);
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      setCustomerCsvText(text);
+      setCustomerCsvFileName(file.name);
+      setCustomerImportSummary(null);
+      setCustomerImportMessage(`Loaded ${file.name}. Run validation before import.`);
+    } catch {
+      setCustomerImportMessage("Failed to read file. Please try again.");
+      setCustomerCsvText("");
+      setCustomerCsvFileName("");
+      setCustomerImportSummary(null);
+    }
+  }
+
+  async function runCustomerImport(dryRun: boolean): Promise<void> {
+    if (!customerCsvText.trim()) {
+      setCustomerImportMessage("Upload a CSV file first.");
+      return;
+    }
+
+    if (dryRun) {
+      setCustomerValidating(true);
+    } else {
+      setCustomerImporting(true);
+    }
+
+    setCustomerImportMessage("");
+
+    try {
+      const res = await fetch("/api/employees/import-customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          csvText: customerCsvText,
+          dryRun,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCustomerImportMessage((json as { error?: string }).error ?? "Customer import failed.");
+        return;
+      }
+
+      const summary = json as CustomerImportSummary;
+      setCustomerImportSummary(summary);
+
+      if (dryRun) {
+        setCustomerImportMessage(
+          `Validation complete: ${summary.validRows} valid row(s), ${summary.issues.total} issue(s).`,
+        );
+        return;
+      }
+
+      setCustomerImportMessage(
+        `Import complete: ${summary.inserted ?? 0} inserted, ${summary.updated ?? 0} updated, ${summary.failed ?? 0} failed.`,
+      );
+      await load();
+    } catch {
+      setCustomerImportMessage("Network error while processing customer import.");
+    } finally {
+      setCustomerValidating(false);
+      setCustomerImporting(false);
+    }
   }
 
   function toggleEmployeeSelection(employeeId: string, checked: boolean): void {
@@ -399,6 +524,103 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
 
           <span className="muted employee-selected-count">Selected: {selectedEmployeeIds.length}</span>
         </div>
+      </article>
+
+      <article className="card grid customer-import-panel" style={{ gap: 10 }}>
+        <div className="inline" style={{ justifyContent: "space-between" }}>
+          <h2>Bulk Customer Upload</h2>
+          <button className="ghost" type="button" onClick={downloadCustomerTemplate}>
+            Download CSV Template
+          </button>
+        </div>
+
+        <p className="muted">
+          Required fields: <strong>full_name</strong>, <strong>whatsapp_number</strong>. Optional fields:{" "}
+          <strong>customer_segment</strong>, <strong>area</strong>, <strong>notes</strong>. Number format must be{" "}
+          <strong>+8801xxxxxxxxx</strong>.
+        </p>
+
+        <div className="inline customer-import-controls">
+          <input
+            ref={customerFileRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(event) => void onCustomerFileChange(event)}
+          />
+
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => void runCustomerImport(true)}
+            disabled={customerValidating || customerImporting || !customerCsvText.trim()}
+          >
+            {customerValidating ? "Validating..." : "Validate CSV"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void runCustomerImport(false)}
+            disabled={customerImporting || customerValidating || !customerCsvText.trim()}
+          >
+            {customerImporting ? "Importing..." : "Import Customers"}
+          </button>
+
+          {customerCsvFileName ? <span className="muted">File: {customerCsvFileName}</span> : null}
+        </div>
+
+        {customerImportMessage ? <p className="muted">{customerImportMessage}</p> : null}
+
+        {customerImportSummary ? (
+          <div className="customer-import-summary-grid">
+            <article className="panel">
+              <p className="kpi-label">Rows In File</p>
+              <p className="kpi-value">{customerImportSummary.totalDataRows}</p>
+            </article>
+            <article className="panel">
+              <p className="kpi-label">Valid Rows</p>
+              <p className="kpi-value">{customerImportSummary.validRows}</p>
+            </article>
+            <article className="panel">
+              <p className="kpi-label">Would Insert</p>
+              <p className="kpi-value">{customerImportSummary.wouldInsert}</p>
+            </article>
+            <article className="panel">
+              <p className="kpi-label">Would Update</p>
+              <p className="kpi-value">{customerImportSummary.wouldUpdate}</p>
+            </article>
+          </div>
+        ) : null}
+
+        {customerImportSummary?.issues.items.length ? (
+          <div className="table-wrap customer-import-issues-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Row</th>
+                  <th>Field</th>
+                  <th>Issue</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {customerImportSummary.issues.items.map((issue, index) => (
+                  <tr key={`${issue.rowNumber}-${issue.field}-${index}`}>
+                    <td>{issue.rowNumber}</td>
+                    <td>{issue.field}</td>
+                    <td>{issue.message}</td>
+                    <td>{issue.value || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+
+        {customerImportSummary?.issues.truncated ? (
+          <p className="muted">
+            Showing first {customerImportSummary.issues.items.length} issues out of {customerImportSummary.issues.total}.
+          </p>
+        ) : null}
       </article>
 
       {editorOpen ? (

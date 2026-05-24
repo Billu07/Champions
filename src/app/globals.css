@@ -855,6 +855,7 @@ details summary {
 .tag-creator,
 .directory-panel,
 .member-editor,
+.customer-import-panel,
 .broadcast-station,
 .conversations-toolbar,
 .reports-filters,
@@ -931,6 +932,37 @@ details summary {
   font-weight: 700;
   color: #245336;
   align-self: center;
+}
+
+.customer-import-panel {
+  padding: 14px;
+}
+
+.customer-import-controls {
+  gap: 8px;
+  align-items: center;
+}
+
+.customer-import-controls input[type="file"] {
+  max-width: 360px;
+}
+
+.customer-import-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.customer-import-summary-grid .panel {
+  padding: 10px;
+}
+
+.customer-import-summary-grid .kpi-value {
+  font-size: clamp(22px, 1.8vw, 30px);
+}
+
+.customer-import-issues-table table {
+  min-width: 680px;
 }
 
 .employee-manager label > span,
@@ -1189,6 +1221,16 @@ details summary {
     margin-left: 0;
     width: 100%;
     align-self: auto;
+  }
+
+  .customer-import-controls {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .customer-import-controls input[type="file"] {
+    width: 100%;
+    max-width: none;
   }
 }
 
