@@ -47,6 +47,14 @@ type BroadcastSendFailure = {
   templateVariant?: string;
 };
 
+type BroadcastFailureSummary = {
+  category?: string;
+  owner?: "meta_compliance" | "meta_template" | "recipient_data" | "environment" | "unknown";
+  label?: string;
+  hint?: string;
+  count?: number;
+};
+
 type BroadcastConsoleProps = {
   initialEmployees: Employee[];
   templateName: string;
@@ -55,6 +63,7 @@ type BroadcastConsoleProps = {
 type TargetMode = "mixed" | "group" | "custom";
 type ToastKind = "success" | "error" | "info";
 type GroupAudience = Exclude<BroadcastAudienceCategory, "custom">;
+type PreviewAudienceScope = "preview" | GroupAudience;
 
 type ToastItem = {
   id: number;
@@ -84,8 +93,17 @@ const groupTagMap: Record<Exclude<GroupAudience, "all">, string> = {
   customers: "customers",
 };
 
-const PREVIEW_REQUEST_TIMEOUT_MS = 25000;
-const PREVIEW_MAX_RETRIES = 1;
+const previewAudienceOptions: Array<{ value: PreviewAudienceScope; label: string }> = [
+  { value: "preview", label: "Current Preview" },
+  { value: "all", label: "All" },
+  { value: "sales_team", label: "Sales" },
+  { value: "head_office", label: "Head Office" },
+  { value: "drivers", label: "Drivers" },
+  { value: "customers", label: "Customers" },
+];
+
+const PREVIEW_REQUEST_TIMEOUT_MS = 35000;
+const PREVIEW_MAX_RETRIES = 2;
 
 function dedupe(values: string[]): string[] {
   return Array.from(new Set(values));
@@ -220,6 +238,39 @@ function previewWarnings(preview: PreviewResponse | null): string[] {
   return warnings;
 }
 
+function userFriendlyAiWarning(warning: string): string {
+  const value = warning.toLowerCase();
+  if (value.includes("429") || value.includes("quota")) {
+    return "AI quota is temporarily exceeded, so fallback drafting was used.";
+  }
+  if (
+    value.includes("timed out") ||
+    value.includes("timeout") ||
+    value.includes("network") ||
+    value.includes("connectivity is unstable")
+  ) {
+    return "AI connectivity is unstable right now, so fallback drafting was used.";
+  }
+  return warning.replace(/^.*fallback:\s*/i, "").trim() || "AI fallback was used.";
+}
+
+function ownerLabel(owner: BroadcastFailureSummary["owner"]): string {
+  if (owner === "meta_compliance") return "Meta compliance/policy";
+  if (owner === "meta_template") return "Meta template setup";
+  if (owner === "recipient_data") return "Recipient data";
+  if (owner === "environment") return "Environment/config";
+  return "Unknown";
+}
+
+function audienceScopeLabel(value: PreviewAudienceScope): string {
+  if (value === "preview") return "Current Preview";
+  if (value === "all") return "All";
+  if (value === "sales_team") return "Sales";
+  if (value === "head_office") return "Head Office";
+  if (value === "drivers") return "Drivers";
+  return "Customers";
+}
+
 function draftModeLabel(preview: PreviewResponse | null): string {
   const mode = preview?.aiDiagnostics?.messageRewrite.mode;
   if (mode === "compose") return "AI drafted";
@@ -243,7 +294,11 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
   const [search, setSearch] = useState("");
 
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
+  const [previewBaseAudienceCategory, setPreviewBaseAudienceCategory] = useState<BroadcastAudienceCategory>("all");
   const [previewAudienceCategory, setPreviewAudienceCategory] = useState<BroadcastAudienceCategory>("all");
+  const [previewAudienceScope, setPreviewAudienceScope] = useState<PreviewAudienceScope>("preview");
+  const [previewRecipientSearch, setPreviewRecipientSearch] = useState("");
+  const [previewSelectedRecipientIds, setPreviewSelectedRecipientIds] = useState<string[]>([]);
   const [reviewedMessage, setReviewedMessage] = useState("");
   const [previewGeneratedAt, setPreviewGeneratedAt] = useState("");
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
@@ -257,6 +312,10 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
   const toastCounterRef = useRef(0);
 
   const busy = previewing || sending;
+  const employeesById = useMemo(
+    () => new Map(initialEmployees.map((employee) => [employee.id, employee])),
+    [initialEmployees],
+  );
 
   const filteredEmployees = useMemo(() => {
     return initialEmployees.filter((employee) => employeeMatchesQuery(employee, search));
@@ -282,7 +341,62 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
     [groupExcludedIds, groupMembers],
   );
 
-  const previewRecipientCount = preview?.recipients.length ?? 0;
+  const previewRecipientBaseIds = useMemo(
+    () => (preview ? dedupe(preview.recipients.map((recipient) => recipient.id)) : []),
+    [preview],
+  );
+  const previewSelectedSet = useMemo(
+    () => new Set(previewSelectedRecipientIds),
+    [previewSelectedRecipientIds],
+  );
+  const previewScopedCandidateIds = useMemo(() => {
+    if (!preview) return [];
+    if (previewAudienceScope === "preview") return previewRecipientBaseIds;
+    return dedupe(
+      initialEmployees
+        .filter((employee) => employee.is_active && isEmployeeInAudience(employee, previewAudienceScope))
+        .map((employee) => employee.id),
+    );
+  }, [initialEmployees, preview, previewAudienceScope, previewRecipientBaseIds]);
+  const previewScopedCandidates = useMemo(
+    () => previewScopedCandidateIds
+      .map((id) => employeesById.get(id))
+      .filter((employee): employee is Employee => Boolean(employee)),
+    [employeesById, previewScopedCandidateIds],
+  );
+  const filteredPreviewScopedCandidates = useMemo(
+    () => previewScopedCandidates.filter((employee) => employeeMatchesQuery(employee, previewRecipientSearch)),
+    [previewRecipientSearch, previewScopedCandidates],
+  );
+  const previewRecipientRouteMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    if (!preview) return map;
+
+    for (const route of preview.routes) {
+      for (const employeeId of route.recipientEmployeeIds) {
+        const list = map.get(employeeId) ?? [];
+        if (!list.includes(route.targetLabel)) {
+          list.push(route.targetLabel);
+        }
+        map.set(employeeId, list);
+      }
+    }
+
+    return map;
+  }, [preview]);
+  const previewRouteSelectedCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!preview) return map;
+
+    for (const route of preview.routes) {
+      const selectedCount = route.recipientEmployeeIds.filter((id) => previewSelectedSet.has(id)).length;
+      map.set(route.routeId, selectedCount);
+    }
+
+    return map;
+  }, [preview, previewSelectedSet]);
+  const previewRecipientCount = previewSelectedRecipientIds.length;
+  const previewScopedSelectedCount = previewScopedCandidateIds.filter((id) => previewSelectedSet.has(id)).length;
   const previewRouteCount = preview?.routes.length ?? 0;
   const aiWarnings = previewWarnings(preview);
 
@@ -356,6 +470,52 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
     });
   }
 
+  function applyPreviewAudienceScope(nextScope: PreviewAudienceScope): void {
+    setPreviewAudienceScope(nextScope);
+    setPreviewRecipientSearch("");
+
+    if (!preview) return;
+
+    if (nextScope === "preview") {
+      setPreviewAudienceCategory(previewBaseAudienceCategory);
+      setPreviewSelectedRecipientIds(previewRecipientBaseIds);
+      return;
+    }
+
+    const nextRecipientIds = dedupe(
+      initialEmployees
+        .filter((employee) => employee.is_active && isEmployeeInAudience(employee, nextScope))
+        .map((employee) => employee.id),
+    );
+    setPreviewAudienceCategory(nextScope);
+    setPreviewSelectedRecipientIds(nextRecipientIds);
+  }
+
+  function togglePreviewRecipient(id: string, checked: boolean): void {
+    setPreviewSelectedRecipientIds((prev) => {
+      if (checked) {
+        return dedupe([...prev, id]);
+      }
+      return prev.filter((item) => item !== id);
+    });
+  }
+
+  function selectAllScopedPreviewRecipients(): void {
+    setPreviewSelectedRecipientIds((prev) => dedupe([...prev, ...previewScopedCandidateIds]));
+  }
+
+  function selectFilteredScopedPreviewRecipients(): void {
+    setPreviewSelectedRecipientIds((prev) => dedupe([
+      ...prev,
+      ...filteredPreviewScopedCandidates.map((employee) => employee.id),
+    ]));
+  }
+
+  function clearFilteredScopedPreviewRecipients(): void {
+    const idsToRemove = new Set(filteredPreviewScopedCandidates.map((employee) => employee.id));
+    setPreviewSelectedRecipientIds((prev) => prev.filter((id) => !idsToRemove.has(id)));
+  }
+
   function buildPreviewPayload(useAiRoutingOverride?: boolean) {
     const override = typeof useAiRoutingOverride === "boolean" ? useAiRoutingOverride : null;
 
@@ -385,19 +545,43 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
     };
   }
 
-  function buildReviewedRoutesForSend(previewPayload: PreviewResponse, finalMessage: string) {
-    return previewPayload.routes
-      .filter((route) => route.recipientEmployeeIds.length > 0)
-      .map((route) => ({
+  function buildReviewedRoutesForSend(
+    previewPayload: PreviewResponse,
+    finalMessage: string,
+    selectedRecipientIds: string[],
+  ) {
+    const selectedSet = new Set(selectedRecipientIds);
+    const covered = new Set<string>();
+
+    const reviewedRoutes = previewPayload.routes
+      .map((route) => {
+        const filteredRecipientIds = route.recipientEmployeeIds.filter((id) => selectedSet.has(id));
+        for (const id of filteredRecipientIds) covered.add(id);
+        return {
         routeId: route.routeId,
         targetLabel: route.targetLabel,
         source: route.source,
-        recipientEmployeeIds: route.recipientEmployeeIds,
+        recipientEmployeeIds: filteredRecipientIds,
         message:
           route.source === "ai_person" || route.source === "ai_group"
             ? (route.instruction.trim() || finalMessage)
             : finalMessage,
-      }));
+        };
+      })
+      .filter((route) => route.recipientEmployeeIds.length > 0);
+
+    const fallbackIds = selectedRecipientIds.filter((id) => !covered.has(id));
+    if (fallbackIds.length > 0) {
+      reviewedRoutes.push({
+        routeId: `manual-fallback-${Date.now()}`,
+        targetLabel: "Audience override",
+        source: "manual",
+        recipientEmployeeIds: fallbackIds,
+        message: finalMessage,
+      });
+    }
+
+    return reviewedRoutes;
   }
 
   function applySendResponse(json: Record<string, unknown>) {
@@ -410,12 +594,25 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
     const failureDetails = ((json as { failureDetails?: BroadcastSendFailure[] }).failureDetails ?? []).filter(
       (item) => item.reason,
     );
+    const failureSummary = ((json as { failureSummary?: BroadcastFailureSummary[] }).failureSummary ?? [])
+      .filter((row) => Number(row.count ?? 0) > 0)
+      .sort((a, b) => Number(b.count ?? 0) - Number(a.count ?? 0));
+    const topFailure = failureSummary[0];
     const failurePreview = failureDetails[0];
 
-    if (failed > 0 && failurePreview) {
-      const partialMessage = `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}. First error for ${failurePreview.employeeName || "recipient"}: ${failurePreview.reason}${failurePreview.languageCode ? ` (lang: ${failurePreview.languageCode})` : ""}${failurePreview.templateVariant ? ` (variant: ${failurePreview.templateVariant})` : ""}`;
+    if (failed > 0) {
+      const partialMessage = failurePreview
+        ? `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}. First error for ${failurePreview.employeeName || "recipient"}: ${failurePreview.reason}${failurePreview.languageCode ? ` (lang: ${failurePreview.languageCode})` : ""}${failurePreview.templateVariant ? ` (variant: ${failurePreview.templateVariant})` : ""}`
+        : `Campaign ${(json as { campaignId: string }).campaignId}: accepted=${accepted}, failed=${failed}.`;
       setStatus(partialMessage);
-      pushToast("info", "Broadcast sent with failures", `Accepted: ${accepted}, Failed: ${failed}`);
+      if (topFailure) {
+        const topCount = Number(topFailure.count ?? 0);
+        const headline = accepted > 0 ? "Broadcast sent with partial failures" : "Broadcast failed";
+        const detail = `${ownerLabel(topFailure.owner)}: ${topFailure.label || "delivery issue"} (${topCount}/${failed}). ${topFailure.hint || ""}`.trim();
+        pushToast("info", headline, detail);
+      } else {
+        pushToast("info", "Broadcast sent with failures", `Accepted: ${accepted}, Failed: ${failed}`);
+      }
       return;
     }
 
@@ -475,7 +672,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
         } catch (error) {
           lastNetworkError = error;
           if (attempt >= PREVIEW_MAX_RETRIES) break;
-          await delay(450);
+          await delay(500 * (attempt + 1));
         }
       }
 
@@ -492,21 +689,41 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       }
 
       const parsed = json as PreviewResponse;
+      const nextReviewedMessage = deriveEditorMessageFromPreview(parsed, trimmedMessage, targetMode);
+      const requestedRegeneration = Boolean(options?.aiRegenerateInstruction?.trim());
+      const previousDraftText = (options?.previousDraft ?? "").trim();
+      const regenerateUnchanged = requestedRegeneration &&
+        previousDraftText &&
+        collapseWhitespace(previousDraftText) === collapseWhitespace(nextReviewedMessage);
       setPreview(parsed);
+      setPreviewBaseAudienceCategory(payload.audienceCategory);
       setPreviewAudienceCategory(payload.audienceCategory);
-      setReviewedMessage(deriveEditorMessageFromPreview(parsed, trimmedMessage, targetMode));
+      setPreviewAudienceScope("preview");
+      setPreviewRecipientSearch("");
+      setPreviewSelectedRecipientIds(dedupe(parsed.recipients.map((recipient) => recipient.id)));
+      setReviewedMessage(nextReviewedMessage);
       setPreviewGeneratedAt(new Date().toLocaleString());
       setPreviewModalOpen(true);
       setRegenerateInstruction("");
 
       const warnings = previewWarnings(parsed);
       if (warnings.length > 0) {
-        setStatus(`Preview ready with AI fallback: ${warnings[0]}`);
-        pushToast("info", "Preview ready with fallback", warnings[0]);
+        const friendlyWarning = userFriendlyAiWarning(warnings[0]);
+        setStatus(`Preview ready with fallback: ${friendlyWarning}`);
+        if (requestedRegeneration && regenerateUnchanged) {
+          pushToast("info", "Regeneration fallback used", `${friendlyWarning} Draft remained unchanged.`);
+        } else {
+          pushToast("info", "Preview ready with fallback", friendlyWarning);
+        }
       } else {
         const modeText = draftModeLabel(parsed);
-        setStatus(`${modeText}: ${parsed.recipients.length} recipient(s), ${parsed.routes.length} route(s).`);
-        pushToast("success", "Preview ready", `${modeText} for ${parsed.recipients.length} recipients.`);
+        if (requestedRegeneration && regenerateUnchanged) {
+          setStatus(`Regeneration completed, but draft stayed the same.`);
+          pushToast("info", "Regeneration unchanged", "AI kept the previous draft based on your instruction.");
+        } else {
+          setStatus(`${modeText}: ${parsed.recipients.length} recipient(s), ${parsed.routes.length} route(s).`);
+          pushToast("success", "Preview ready", `${modeText} for ${parsed.recipients.length} recipients.`);
+        }
       }
     } catch (error) {
       const msg = networkErrorMessage(error);
@@ -579,7 +796,13 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       return;
     }
 
-    const reviewedRoutes = buildReviewedRoutesForSend(preview, finalMessage);
+    if (previewSelectedRecipientIds.length === 0) {
+      setStatus("No recipients selected.");
+      pushToast("error", "No recipients", "Select at least one recipient in preview before sending.");
+      return;
+    }
+
+    const reviewedRoutes = buildReviewedRoutesForSend(preview, finalMessage, previewSelectedRecipientIds);
 
     if (reviewedRoutes.length === 0) {
       setStatus("No valid recipients in preview routes.");
@@ -674,7 +897,11 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       }
 
       const parsed = previewJson as PreviewResponse;
-      const reviewedRoutes = buildReviewedRoutesForSend(parsed, trimmedMessage);
+      const reviewedRoutes = buildReviewedRoutesForSend(
+        parsed,
+        trimmedMessage,
+        parsed.recipients.map((recipient) => recipient.id),
+      );
 
       if (reviewedRoutes.length === 0) {
         setStatus("No valid recipients available for send.");
@@ -991,6 +1218,91 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
               />
             </label>
 
+            <div className="panel grid" style={{ gap: 10 }}>
+              <div className="inline" style={{ justifyContent: "space-between" }}>
+                <strong>Selected Recipients</strong>
+                <span className="muted">
+                  Selected: {previewRecipientCount} | Scope: {audienceScopeLabel(previewAudienceScope)} ({previewScopedSelectedCount}/{previewScopedCandidateIds.length})
+                </span>
+              </div>
+
+              <div className="inline" style={{ flexWrap: "wrap", gap: 8 }}>
+                {previewAudienceOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={previewAudienceScope === option.value ? "" : "ghost"}
+                    onClick={() => applyPreviewAudienceScope(option.value)}
+                    disabled={busy}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
+              <span className="muted">
+                Change audience or unselect members here if AI/user targeting was incorrect. This applies to this send.
+              </span>
+
+              <input
+                className="input"
+                value={previewRecipientSearch}
+                onChange={(event) => setPreviewRecipientSearch(event.target.value)}
+                placeholder="Search recipients by name, number, department, designation"
+                disabled={busy}
+              />
+
+              <div className="inline" style={{ flexWrap: "wrap", gap: 8 }}>
+                <button type="button" className="ghost" onClick={() => selectFilteredScopedPreviewRecipients()} disabled={busy}>
+                  Select Filtered
+                </button>
+                <button type="button" className="ghost" onClick={() => selectAllScopedPreviewRecipients()} disabled={busy}>
+                  Select Scope
+                </button>
+                <button type="button" className="ghost" onClick={() => clearFilteredScopedPreviewRecipients()} disabled={busy}>
+                  Unselect Filtered
+                </button>
+                <button type="button" className="ghost" onClick={() => applyPreviewAudienceScope("preview")} disabled={busy}>
+                  Reset to Preview
+                </button>
+                <span className="muted">Showing: {filteredPreviewScopedCandidates.length}</span>
+              </div>
+
+              <div className="table-wrap" style={{ maxHeight: 220, overflowY: "auto" }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 64 }}>Pick</th>
+                      <th style={{ minWidth: 220 }}>Name</th>
+                      <th style={{ minWidth: 160 }}>Department</th>
+                      <th style={{ minWidth: 170 }}>Designation</th>
+                      <th style={{ minWidth: 170 }}>WhatsApp</th>
+                      <th style={{ minWidth: 190 }}>Route Context</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredPreviewScopedCandidates.map((employee) => (
+                      <tr key={employee.id}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={previewSelectedSet.has(employee.id)}
+                            onChange={(event) => togglePreviewRecipient(employee.id, event.target.checked)}
+                            disabled={busy}
+                          />
+                        </td>
+                        <td>{employee.full_name}</td>
+                        <td>{employee.department || "-"}</td>
+                        <td>{employee.designation || "-"}</td>
+                        <td>{employee.whatsapp_e164}</td>
+                        <td>{(previewRecipientRouteMap.get(employee.id) ?? ["Manual override"]).join(", ")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
             <div className="panel grid" style={{ gap: 8 }}>
               <label className="grid" style={{ gap: 6 }}>
                 <span>Re-instruct AI (Optional)</span>
@@ -1025,7 +1337,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
                     <tr key={route.routeId}>
                       <td>{route.targetLabel}</td>
                       <td>{route.source}</td>
-                      <td>{route.recipientEmployeeIds.length}</td>
+                      <td>{previewRouteSelectedCounts.get(route.routeId) ?? 0}</td>
                       <td>{Math.round(route.confidence * 100)}%</td>
                       <td>{route.instruction}</td>
                     </tr>

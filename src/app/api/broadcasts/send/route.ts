@@ -67,8 +67,11 @@ function stripLeadingNameMentions(message: string, names: string[]): string {
 }
 
 function languageCandidates(): string[] {
-  const preferred = env.WHATSAPP_BROADCAST_TEMPLATE_LANGUAGE.trim();
-  const fallbacks = ["en_US", "en", "bn", "bn_BD"];
+  const preferred = env.WHATSAPP_BROADCAST_TEMPLATE_LANGUAGE.trim() || "en";
+  const normalized = preferred.toLowerCase();
+  const fallbacks = normalized.startsWith("bn")
+    ? ["bn", "bn_BD", "en", "en_US"]
+    : ["en", "en_US"];
   return Array.from(new Set([preferred, ...fallbacks].map((item) => item.trim()).filter(Boolean)));
 }
 
@@ -90,6 +93,143 @@ function isTemplateParameterError(error: unknown): boolean {
     normalized.includes("number of parameters") ||
     normalized.includes("required parameter")
   );
+}
+
+type FailureOwner = "meta_compliance" | "meta_template" | "recipient_data" | "environment" | "unknown";
+type FailureCategory =
+  | "template_translation_missing"
+  | "template_parameter_mismatch"
+  | "meta_policy_block"
+  | "recipient_undeliverable"
+  | "recipient_experiment_gate"
+  | "allowlist_block"
+  | "auth_or_permission"
+  | "rate_limit"
+  | "network_or_timeout"
+  | "unknown";
+
+type ClassifiedFailure = {
+  category: FailureCategory;
+  owner: FailureOwner;
+  label: string;
+  hint: string;
+};
+
+function classifyFailureReason(reason: string): ClassifiedFailure {
+  const normalized = reason.toLowerCase();
+
+  if (
+    normalized.includes("132001") ||
+    normalized.includes("translation") ||
+    normalized.includes("template name does not exist")
+  ) {
+    return {
+      category: "template_translation_missing",
+      owner: "meta_template",
+      label: "Template language translation missing",
+      hint: "Meta template is not approved/published for attempted language code.",
+    };
+  }
+
+  if (isTemplateParameterError(new Error(reason))) {
+    return {
+      category: "template_parameter_mismatch",
+      owner: "meta_template",
+      label: "Template parameter mismatch",
+      hint: "Template variables in Meta do not match payload mapping.",
+    };
+  }
+
+  if (normalized.includes("healthy ecosystem engagement") || normalized.includes("131047") || normalized.includes("470")) {
+    return {
+      category: "meta_policy_block",
+      owner: "meta_compliance",
+      label: "Meta policy/compliance throttle",
+      hint: "Meta blocked this delivery due policy, quality, or conversation rules.",
+    };
+  }
+
+  if (normalized.includes("part of an experiment")) {
+    return {
+      category: "recipient_experiment_gate",
+      owner: "meta_compliance",
+      label: "Meta experiment gate",
+      hint: "Meta currently limits this recipient number as part of platform experiments.",
+    };
+  }
+
+  if (normalized.includes("message undeliverable")) {
+    return {
+      category: "recipient_undeliverable",
+      owner: "recipient_data",
+      label: "Recipient number undeliverable",
+      hint: "Recipient number is unavailable/unreachable on WhatsApp.",
+    };
+  }
+
+  if (normalized.includes("blocked by whatsapp_test_allowlist_e164")) {
+    return {
+      category: "allowlist_block",
+      owner: "environment",
+      label: "Blocked by test allowlist",
+      hint: "Number is not present in WHATSAPP_TEST_ALLOWLIST_E164.",
+    };
+  }
+
+  if (normalized.includes("401") || normalized.includes("unauthorized") || normalized.includes("permission")) {
+    return {
+      category: "auth_or_permission",
+      owner: "environment",
+      label: "Authentication/permission issue",
+      hint: "Access token, app permission, or business capability is invalid.",
+    };
+  }
+
+  if (normalized.includes("429") || normalized.includes("rate limit")) {
+    return {
+      category: "rate_limit",
+      owner: "meta_compliance",
+      label: "Rate limited",
+      hint: "Too many requests/messages in a short time window.",
+    };
+  }
+
+  if (
+    normalized.includes("timed out") ||
+    normalized.includes("timeout") ||
+    normalized.includes("fetch failed") ||
+    normalized.includes("network")
+  ) {
+    return {
+      category: "network_or_timeout",
+      owner: "unknown",
+      label: "Network/timeout issue",
+      hint: "Transient connectivity issue while calling WhatsApp API.",
+    };
+  }
+
+  return {
+    category: "unknown",
+    owner: "unknown",
+    label: "Unknown delivery error",
+    hint: "Inspect the failure reason and WhatsApp payload for details.",
+  };
+}
+
+function failurePriority(error: unknown): number {
+  const message = (error as Error).message ?? "";
+  const normalized = message.toLowerCase();
+
+  if (isTemplateParameterError(error)) return 500;
+  if (normalized.includes("132001")) return 300;
+  if (normalized.includes("blocked by whatsapp_test_allowlist_e164")) return 400;
+  if (normalized.includes("401") || normalized.includes("unauthorized")) return 450;
+  return 200;
+}
+
+function pickPreferredError(current: Error | null, candidate: Error): Error {
+  if (!current) return candidate;
+  return failurePriority(candidate) >= failurePriority(current) ? candidate : current;
 }
 
 function parameterVariants(employeeName: string, message: string) {
@@ -159,6 +299,10 @@ export async function POST(request: Request) {
     let failed = 0;
     const languages = languageCandidates();
     const failureDetails: Array<{ employeeName: string; reason: string; languageCode: string; templateVariant: string }> = [];
+    const failureSummary = new Map<
+      FailureCategory,
+      ClassifiedFailure & { count: number }
+    >();
 
     for (const route of parsed.data.reviewedRoutes) {
       const routeMessage = route.message.trim() || parsed.data.finalMessage;
@@ -178,8 +322,10 @@ export async function POST(request: Request) {
           let usedLanguage = "";
           let usedTemplateVariant = "";
           let lastError: Error | null = null;
+          let preferredError: Error | null = null;
 
           for (const variant of parameterVariants(employee.full_name, personalizedRouteMessage)) {
+            let variantHadParameterMismatch = false;
             for (const languageCode of languages) {
               attemptedLanguage = languageCode;
               attemptedTemplateVariant = variant.name;
@@ -194,18 +340,29 @@ export async function POST(request: Request) {
                 usedTemplateVariant = variant.name;
                 break;
               } catch (error) {
-                lastError = error as Error;
-                if (isTranslationError(error) || isTemplateParameterError(error)) {
+                const typedError = error as Error;
+                lastError = typedError;
+                preferredError = pickPreferredError(preferredError, typedError);
+
+                if (isTemplateParameterError(typedError)) {
+                  variantHadParameterMismatch = true;
+                  break;
+                }
+
+                if (isTranslationError(typedError)) {
                   continue;
                 }
-                throw error;
+                throw typedError;
               }
             }
             if (response) break;
+            if (variantHadParameterMismatch) {
+              continue;
+            }
           }
 
           if (!response) {
-            throw lastError ?? new Error("Broadcast send failed: no language candidate succeeded");
+            throw preferredError ?? lastError ?? new Error("Broadcast send failed: no language candidate succeeded");
           }
 
           await insertBroadcastDelivery({
@@ -244,6 +401,15 @@ export async function POST(request: Request) {
           accepted += 1;
         } catch (error) {
           const reason = (error as Error).message || "Broadcast send failed";
+          const classified = classifyFailureReason(reason);
+          const existingSummary = failureSummary.get(classified.category);
+          failureSummary.set(
+            classified.category,
+            existingSummary
+              ? { ...existingSummary, count: existingSummary.count + 1 }
+              : { ...classified, count: 1 },
+          );
+
           try {
             await insertBroadcastDelivery({
               campaignId,
@@ -254,6 +420,10 @@ export async function POST(request: Request) {
                 routeId: route.routeId,
                 routeSource: route.source,
                 targetLabel: route.targetLabel,
+                attemptedLanguage: attemptedLanguage || null,
+                attemptedTemplateVariant: attemptedTemplateVariant || null,
+                classifiedCategory: classified.category,
+                classifiedOwner: classified.owner,
               },
             });
           } catch (deliveryError) {
@@ -284,6 +454,7 @@ export async function POST(request: Request) {
       routes: parsed.data.reviewedRoutes.length,
       recipients: recipients.length,
       failureDetails: failureDetails.slice(0, 10),
+      failureSummary: Array.from(failureSummary.values()).sort((a, b) => b.count - a.count),
     });
   } catch (error) {
     const message = (error as Error).message || "Broadcast send failed";
