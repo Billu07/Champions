@@ -408,9 +408,14 @@ async function runScheduleLabEntry(entry: ScheduleLabEntry, now = new Date()) {
   }
 }
 
+// Catch-up window so a schedule still fires if the dispatch cron drifts or runs
+// every few minutes rather than exactly on the minute. Per-day job_key dedup
+// (createJobRun) guarantees each schedule still sends at most once.
+const DISPATCH_CATCHUP_MINUTES = 15;
+
 export async function runDueScheduleLabDispatch(now = new Date()) {
   const minuteOfDay = minuteOfDayForTimezone(now, env.NEXT_PUBLIC_APP_TIMEZONE);
-  const dueSchedules = await listDueActiveScheduleLabEntries(minuteOfDay);
+  const dueSchedules = await listDueActiveScheduleLabEntries(minuteOfDay, DISPATCH_CATCHUP_MINUTES);
 
   if (dueSchedules.length === 0) {
     return {
