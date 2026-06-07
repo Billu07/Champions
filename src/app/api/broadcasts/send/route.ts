@@ -2,6 +2,7 @@ import { z } from "zod";
 import { fail, ok } from "@/lib/http";
 import { requestHasAdminSession } from "@/lib/auth";
 import { env } from "@/lib/config";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { logError } from "@/lib/logger";
 import {
   createBroadcastCampaign,
@@ -278,23 +279,6 @@ type SendTask = {
   employee: Awaited<ReturnType<typeof getEmployeesByIds>>[number];
   message: string;
 };
-
-// Worker-pool runner: keeps `limit` workers busy until `items` is exhausted.
-async function mapWithConcurrency<T>(
-  items: T[],
-  limit: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) {
-      const current = cursor;
-      cursor += 1;
-      await worker(items[current]);
-    }
-  });
-  await Promise.all(workers);
-}
 
 // Once one recipient succeeds, reuse that (variant, language) first for everyone
 // else so we skip re-walking the whole fallback ladder per recipient.

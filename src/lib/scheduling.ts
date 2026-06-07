@@ -1,5 +1,6 @@
 ﻿import { subDays } from "date-fns";
 import { env } from "@/lib/config";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { WORKING_DAYS } from "@/lib/constants";
 import { logError, logInfo } from "@/lib/logger";
 import { dhakaDateISO, dhakaDayName, minuteOfDayForTimezone } from "@/lib/time";
@@ -106,6 +107,9 @@ type InboundReplyClassification = {
 const SCHEDULED_OUTBOUND_CATEGORY = "scheduled_prompt";
 const SCHEDULED_GENERAL_OUTBOUND_CATEGORY = "scheduled_general_prompt";
 const BROADCAST_OUTBOUND_CATEGORY = "ceo_broadcast_template";
+// Recipients per slot are sent in parallel so a full roster finishes well within
+// the serverless function timeout instead of one-by-one.
+const SCHEDULED_SEND_CONCURRENCY = 8;
 const REPLY_LOOKBACK_HOURS = 18;
 const CONTINUATION_LOOKBACK_MINUTES = 45;
 const OUTBOUND_AMBIGUITY_GAP_MINUTES = 20;
@@ -270,7 +274,7 @@ async function runLegacyScheduledSlot(slot: LegacySlotKey, now = new Date()) {
     let sent = 0;
     let failed = 0;
 
-    for (const employee of employees) {
+    await mapWithConcurrency(employees, SCHEDULED_SEND_CONCURRENCY, async (employee) => {
       try {
         const response = await sendDynamicTemplateMessage({
           toE164: employee.whatsapp_e164,
@@ -308,7 +312,7 @@ async function runLegacyScheduledSlot(slot: LegacySlotKey, now = new Date()) {
           error: (error as Error).message,
         });
       }
-    }
+    });
 
     const testNote = isWhatsAppTestAllowlistEnabled() ? `,test_allowlist=${employees.length}` : "";
     await completeJobRun(jobKey, "success", `sent=${sent},failed=${failed}${testNote}`);
@@ -356,7 +360,7 @@ async function runScheduleLabEntry(entry: ScheduleLabEntry, now = new Date()) {
     let sent = 0;
     let failed = 0;
 
-    for (const employee of employees) {
+    await mapWithConcurrency(employees, SCHEDULED_SEND_CONCURRENCY, async (employee) => {
       try {
         const response = await sendDynamicTemplateMessage({
           toE164: employee.whatsapp_e164,
@@ -397,7 +401,7 @@ async function runScheduleLabEntry(entry: ScheduleLabEntry, now = new Date()) {
           error: (error as Error).message,
         });
       }
-    }
+    });
 
     const testNote = isWhatsAppTestAllowlistEnabled() ? `,test_allowlist=${employees.length}` : "";
     await completeJobRun(jobKey, "success", `sent=${sent},failed=${failed}${testNote}`);
