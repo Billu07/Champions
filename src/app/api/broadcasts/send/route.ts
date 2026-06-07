@@ -6,10 +6,11 @@ import { logError } from "@/lib/logger";
 import {
   createBroadcastCampaign,
   getEmployeesByIds,
+  getEmployeesWithOpenServiceWindow,
   insertBroadcastDelivery,
   insertMessageEvent,
 } from "@/lib/repository";
-import { sendDynamicTemplateMessage } from "@/lib/whatsapp";
+import { sendDynamicTemplateMessage, sendTextMessage } from "@/lib/whatsapp";
 import type { BroadcastSendRequest } from "@/lib/types";
 
 const routeSchema = z.object({
@@ -266,6 +267,56 @@ function parameterVariants(employeeName: string, message: string) {
   ];
 }
 
+// Max recipients sent in parallel. WhatsApp Cloud API (STANDARD tier) tolerates
+// far higher, but a bounded pool keeps memory/DB load predictable.
+const SEND_CONCURRENCY = 8;
+
+type TemplateCombo = { variantName: string; languageCode: string };
+
+type SendTask = {
+  route: z.infer<typeof routeSchema>;
+  employee: Awaited<ReturnType<typeof getEmployeesByIds>>[number];
+  message: string;
+};
+
+// Worker-pool runner: keeps `limit` workers busy until `items` is exhausted.
+async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const current = cursor;
+      cursor += 1;
+      await worker(items[current]);
+    }
+  });
+  await Promise.all(workers);
+}
+
+// Once one recipient succeeds, reuse that (variant, language) first for everyone
+// else so we skip re-walking the whole fallback ladder per recipient.
+function variantsForCombo(
+  employeeName: string,
+  message: string,
+  preferred: TemplateCombo | null,
+): ReturnType<typeof parameterVariants> {
+  const variants = parameterVariants(employeeName, message);
+  if (!preferred) return variants;
+  const idx = variants.findIndex((variant) => variant.name === preferred.variantName);
+  if (idx <= 0) return variants;
+  return [variants[idx], ...variants.slice(0, idx), ...variants.slice(idx + 1)];
+}
+
+function languagesForCombo(languages: string[], preferred: TemplateCombo | null): string[] {
+  if (!preferred) return languages;
+  const idx = languages.indexOf(preferred.languageCode);
+  if (idx <= 0) return languages;
+  return [languages[idx], ...languages.slice(0, idx), ...languages.slice(idx + 1)];
+}
+
 export async function POST(request: Request) {
   try {
     if (!(await requestHasAdminSession(request))) {
@@ -287,6 +338,10 @@ export async function POST(request: Request) {
     const recipients = await getEmployeesByIds(recipientIds);
     const recipientsById = new Map(recipients.map((employee) => [employee.id, employee]));
 
+    // Recipients who messaged us in the last 24h can receive free-form text
+    // (instant, no template, no marketing frequency cap / 131049).
+    const openWindow = await getEmployeesWithOpenServiceWindow(recipientIds);
+
     const campaignId = await createBroadcastCampaign({
       creatorType: "ceo",
       originalMessage: parsed.data.originalMessage,
@@ -304,146 +359,208 @@ export async function POST(request: Request) {
       ClassifiedFailure & { count: number }
     >();
 
+    // Flatten routes → recipients into a single task list so we can fan out.
+    const tasks: SendTask[] = [];
     for (const route of parsed.data.reviewedRoutes) {
       const routeMessage = route.message.trim() || parsed.data.finalMessage;
-
       for (const employeeId of dedupe(route.recipientEmployeeIds)) {
         const employee = recipientsById.get(employeeId);
         if (!employee) continue;
         const recipientNames = candidateNamesForEmployee(employee.full_name, employee.aliases ?? []);
-        const personalizedRouteMessage = route.source === "ai_person"
+        const message = route.source === "ai_person"
           ? (stripLeadingNameMentions(routeMessage, recipientNames) || routeMessage)
           : routeMessage;
+        tasks.push({ route, employee, message });
+      }
+    }
 
-        let attemptedLanguage = "";
-        let attemptedTemplateVariant = "";
-        try {
-          let response: { id?: string } | null = null;
-          let usedLanguage = "";
-          let usedTemplateVariant = "";
-          let lastError: Error | null = null;
-          let preferredError: Error | null = null;
+    // Shared across workers; first successful send seeds it so the rest skip the ladder.
+    let preferredCombo: TemplateCombo | null = null;
 
-          for (const variant of parameterVariants(employee.full_name, personalizedRouteMessage)) {
-            let variantHadParameterMismatch = false;
-            for (const languageCode of languages) {
-              attemptedLanguage = languageCode;
-              attemptedTemplateVariant = variant.name;
-              try {
-                response = await sendDynamicTemplateMessage({
-                  toE164: employee.whatsapp_e164,
-                  templateName: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
-                  languageCode,
-                  bodyParameters: variant.bodyParameters,
-                });
-                usedLanguage = languageCode;
-                usedTemplateVariant = variant.name;
+    const recordAccepted = async (
+      employee: SendTask["employee"],
+      response: { id?: string },
+      meta: {
+        route: SendTask["route"];
+        message: string;
+        channel: "free_form" | "template";
+        languageCode?: string;
+        templateVariant?: string;
+      },
+    ): Promise<void> => {
+      await insertBroadcastDelivery({
+        campaignId,
+        employeeId: employee.id,
+        whatsappMessageId: response.id,
+        status: "accepted",
+        statusPayload: {
+          routeId: meta.route.routeId,
+          routeSource: meta.route.source,
+          targetLabel: meta.route.targetLabel,
+          channel: meta.channel,
+          languageCode: meta.languageCode ?? null,
+          templateVariant: meta.templateVariant ?? null,
+        },
+      });
+
+      await insertMessageEvent({
+        employeeId: employee.id,
+        direction: "outbound",
+        category: "ceo_broadcast_template",
+        whatsappMessageId: response.id ?? null,
+        payload: {
+          campaignId,
+          audienceCategory: parsed.data.audienceCategory,
+          routeId: meta.route.routeId,
+          routeSource: meta.route.source,
+          routeTargetLabel: meta.route.targetLabel,
+          channel: meta.channel,
+          template: meta.channel === "template" ? env.WHATSAPP_BROADCAST_TEMPLATE_NAME : null,
+          languageCode: meta.languageCode ?? null,
+          templateVariant: meta.templateVariant ?? null,
+          bodySanitizedForRecipientName: meta.route.source === "ai_person",
+        },
+        messageText: meta.message,
+      });
+
+      accepted += 1;
+    };
+
+    const processTask = async ({ route, employee, message }: SendTask): Promise<void> => {
+      let attemptedLanguage = "";
+      let attemptedTemplateVariant = "";
+      try {
+        // Free-form fast path inside the 24h service window: instant and uncapped.
+        // Any failure (e.g. window just closed) falls through to the template ladder.
+        if (openWindow.has(employee.id)) {
+          try {
+            const freeFormResponse = await sendTextMessage({
+              toE164: employee.whatsapp_e164,
+              message,
+            });
+            await recordAccepted(employee, freeFormResponse, { route, message, channel: "free_form" });
+            return;
+          } catch (error) {
+            logError("Broadcast free-form send failed; falling back to template", {
+              campaignId,
+              employeeId: employee.id,
+              error: (error as Error).message,
+            });
+          }
+        }
+
+        let response: { id?: string } | null = null;
+        let usedLanguage = "";
+        let usedTemplateVariant = "";
+        let lastError: Error | null = null;
+        let preferredError: Error | null = null;
+
+        const variants = variantsForCombo(employee.full_name, message, preferredCombo);
+        const orderedLanguages = languagesForCombo(languages, preferredCombo);
+
+        for (const variant of variants) {
+          let variantHadParameterMismatch = false;
+          for (const languageCode of orderedLanguages) {
+            attemptedLanguage = languageCode;
+            attemptedTemplateVariant = variant.name;
+            try {
+              response = await sendDynamicTemplateMessage({
+                toE164: employee.whatsapp_e164,
+                templateName: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
+                languageCode,
+                bodyParameters: variant.bodyParameters,
+              });
+              usedLanguage = languageCode;
+              usedTemplateVariant = variant.name;
+              break;
+            } catch (error) {
+              const typedError = error as Error;
+              lastError = typedError;
+              preferredError = pickPreferredError(preferredError, typedError);
+
+              if (isTemplateParameterError(typedError)) {
+                variantHadParameterMismatch = true;
                 break;
-              } catch (error) {
-                const typedError = error as Error;
-                lastError = typedError;
-                preferredError = pickPreferredError(preferredError, typedError);
-
-                if (isTemplateParameterError(typedError)) {
-                  variantHadParameterMismatch = true;
-                  break;
-                }
-
-                if (isTranslationError(typedError)) {
-                  continue;
-                }
-                throw typedError;
               }
-            }
-            if (response) break;
-            if (variantHadParameterMismatch) {
-              continue;
+
+              if (isTranslationError(typedError)) {
+                continue;
+              }
+              throw typedError;
             }
           }
-
-          if (!response) {
-            throw preferredError ?? lastError ?? new Error("Broadcast send failed: no language candidate succeeded");
+          if (response) break;
+          if (variantHadParameterMismatch) {
+            continue;
           }
+        }
 
+        if (!response) {
+          throw preferredError ?? lastError ?? new Error("Broadcast send failed: no language candidate succeeded");
+        }
+
+        if (!preferredCombo) {
+          preferredCombo = { variantName: usedTemplateVariant, languageCode: usedLanguage };
+        }
+
+        await recordAccepted(employee, response, {
+          route,
+          message,
+          channel: "template",
+          languageCode: usedLanguage,
+          templateVariant: usedTemplateVariant,
+        });
+      } catch (error) {
+        const reason = (error as Error).message || "Broadcast send failed";
+        const classified = classifyFailureReason(reason);
+        const existingSummary = failureSummary.get(classified.category);
+        failureSummary.set(
+          classified.category,
+          existingSummary
+            ? { ...existingSummary, count: existingSummary.count + 1 }
+            : { ...classified, count: 1 },
+        );
+
+        try {
           await insertBroadcastDelivery({
             campaignId,
             employeeId: employee.id,
-            whatsappMessageId: response.id,
-            status: "accepted",
+            status: "failed",
+            failureReason: reason,
             statusPayload: {
               routeId: route.routeId,
               routeSource: route.source,
               targetLabel: route.targetLabel,
-              languageCode: usedLanguage,
-              templateVariant: usedTemplateVariant,
+              attemptedLanguage: attemptedLanguage || null,
+              attemptedTemplateVariant: attemptedTemplateVariant || null,
+              classifiedCategory: classified.category,
+              classifiedOwner: classified.owner,
             },
           });
-
-          await insertMessageEvent({
+        } catch (deliveryError) {
+          logError("Failed to persist broadcast delivery failure", {
+            campaignId,
             employeeId: employee.id,
-            direction: "outbound",
-            category: "ceo_broadcast_template",
-            whatsappMessageId: response.id ?? null,
-            payload: {
-              campaignId,
-              audienceCategory: parsed.data.audienceCategory,
-              routeId: route.routeId,
-              routeSource: route.source,
-              routeTargetLabel: route.targetLabel,
-              template: env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
-              languageCode: usedLanguage,
-              templateVariant: usedTemplateVariant,
-              bodySanitizedForRecipientName: route.source === "ai_person",
-            },
-            messageText: personalizedRouteMessage,
+            originalReason: reason,
+            insertError: (deliveryError as Error).message,
           });
-
-          accepted += 1;
-        } catch (error) {
-          const reason = (error as Error).message || "Broadcast send failed";
-          const classified = classifyFailureReason(reason);
-          const existingSummary = failureSummary.get(classified.category);
-          failureSummary.set(
-            classified.category,
-            existingSummary
-              ? { ...existingSummary, count: existingSummary.count + 1 }
-              : { ...classified, count: 1 },
-          );
-
-          try {
-            await insertBroadcastDelivery({
-              campaignId,
-              employeeId: employee.id,
-              status: "failed",
-              failureReason: reason,
-              statusPayload: {
-                routeId: route.routeId,
-                routeSource: route.source,
-                targetLabel: route.targetLabel,
-                attemptedLanguage: attemptedLanguage || null,
-                attemptedTemplateVariant: attemptedTemplateVariant || null,
-                classifiedCategory: classified.category,
-                classifiedOwner: classified.owner,
-              },
-            });
-          } catch (deliveryError) {
-            logError("Failed to persist broadcast delivery failure", {
-              campaignId,
-              employeeId: employee.id,
-              originalReason: reason,
-              insertError: (deliveryError as Error).message,
-            });
-          }
-
-          failureDetails.push({
-            employeeName: employee.full_name,
-            reason,
-            languageCode: attemptedLanguage || env.WHATSAPP_BROADCAST_TEMPLATE_LANGUAGE,
-            templateVariant: attemptedTemplateVariant || "unknown",
-          });
-          failed += 1;
         }
+
+        failureDetails.push({
+          employeeName: employee.full_name,
+          reason,
+          languageCode: attemptedLanguage || env.WHATSAPP_BROADCAST_TEMPLATE_LANGUAGE,
+          templateVariant: attemptedTemplateVariant || "unknown",
+        });
+        failed += 1;
       }
+    };
+
+    // Send the first recipient alone to discover the working (variant, language),
+    // then fan the rest out concurrently reusing that combo.
+    if (tasks.length > 0) {
+      await processTask(tasks[0]);
+      await mapWithConcurrency(tasks.slice(1), SEND_CONCURRENCY, processTask);
     }
 
     return ok({

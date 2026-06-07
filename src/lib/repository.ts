@@ -951,6 +951,32 @@ export async function listRecentInboundClassifiedRepliesForEmployee(input: {
   return (res.data ?? []).map((row) => mapMessageEventLink(row as Record<string, unknown>));
 }
 
+// Returns the subset of employee ids that have sent an inbound message within
+// the WhatsApp customer-service window, meaning we may reply with free-form text
+// (no template, no marketing frequency cap).
+export async function getEmployeesWithOpenServiceWindow(
+  employeeIds: string[],
+  windowHours = 24,
+): Promise<Set<string>> {
+  const open = new Set<string>();
+  if (employeeIds.length === 0) return open;
+
+  const sinceIso = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
+  const res = await supabaseAdmin
+    .from("message_events")
+    .select("employee_id")
+    .eq("direction", "inbound")
+    .in("employee_id", employeeIds)
+    .gte("occurred_at", sinceIso);
+
+  ensureNoError(res.error, "Failed to load service-window inbound events");
+  for (const row of res.data ?? []) {
+    const id = (row as { employee_id?: string | null }).employee_id;
+    if (id) open.add(id);
+  }
+  return open;
+}
+
 type JsonMap = Record<string, unknown>;
 
 function asJsonMap(value: unknown): JsonMap {
