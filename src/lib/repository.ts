@@ -679,16 +679,28 @@ export async function deleteScheduleLabEntry(id: string): Promise<void> {
   ensureNoError(res.error, "Failed to delete schedule lab entry");
 }
 
-export async function listDueActiveScheduleLabEntries(minuteOfDay: number): Promise<ScheduleLabEntry[]> {
+export async function listDueActiveScheduleLabEntries(
+  minuteOfDay: number,
+  graceMinutes = 0,
+): Promise<ScheduleLabEntry[]> {
   const mode = await getScheduleLabSchemaMode();
   if (mode === "missing") return [];
 
-  const res = await supabaseAdmin
+  const current = Math.max(0, Math.min(1439, Math.floor(minuteOfDay)));
+  const grace = Math.max(0, Math.floor(graceMinutes));
+
+  let query = supabaseAdmin
     .from("schedule_lab_entries")
     .select(SCHEDULE_LAB_SELECT)
-    .eq("is_active", true)
-    .eq("minute_of_day", Math.max(0, Math.min(1439, Math.floor(minuteOfDay))))
-    .order("created_at", { ascending: true });
+    .eq("is_active", true);
+
+  // With a grace window we fire anything due in the last `grace` minutes (per-day
+  // job_key dedup prevents re-sends); otherwise require an exact minute match.
+  query = grace > 0
+    ? query.gte("minute_of_day", Math.max(0, current - grace)).lte("minute_of_day", current)
+    : query.eq("minute_of_day", current);
+
+  const res = await query.order("created_at", { ascending: true });
 
   ensureNoError(res.error, "Failed to list due schedule lab entries");
   return ((res.data ?? []) as Record<string, unknown>[]).map(mapScheduleLabRow);
