@@ -45,6 +45,18 @@ function statusFailureReason(status: WebhookStatus): string | null {
   return first.message || first.title || first.details || null;
 }
 
+// Persist only the fields we read back, not the full status object, to keep
+// stored payloads small (free-tier storage).
+function compactStatus(status: WebhookStatus): Record<string, unknown> {
+  return {
+    id: status.id ?? null,
+    status: status.status ?? null,
+    timestamp: status.timestamp ?? null,
+    recipient_id: status.recipient_id ?? null,
+    errors: status.errors ?? null,
+  };
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const mode = url.searchParams.get("hub.mode");
@@ -83,7 +95,7 @@ export async function POST(request: Request) {
         status: normalized,
         failureReason,
         occurredAt,
-        payload: status as unknown as Record<string, unknown>,
+        payload: compactStatus(status),
       });
 
       await insertBroadcastDeliveryEvent({
@@ -94,7 +106,7 @@ export async function POST(request: Request) {
         status: normalized,
         failureReason,
         occurredAt,
-        payload: status as unknown as Record<string, unknown>,
+        payload: compactStatus(status),
       });
 
       if (updated.employeeId) {
@@ -103,7 +115,7 @@ export async function POST(request: Request) {
           direction: "outbound",
           category: `ceo_broadcast_status_${normalized}`,
           whatsappMessageId: messageId,
-          payload: status as unknown as Record<string, unknown>,
+          payload: compactStatus(status),
           messageText: null,
           receivedAt: occurredAt,
         });

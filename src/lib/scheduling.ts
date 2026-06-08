@@ -550,8 +550,12 @@ export async function processInboundWebhookPayload(payload: Record<string, unkno
       slotKey: shouldMergeIntoSlot ? scheduledSlotKey : null,
       trackingDate: shouldMergeIntoSlot ? scheduledTrackingDate : null,
       whatsappMessageId: message.id,
+      // Store only what the conversations view needs, not the full webhook
+      // envelope, to keep message_events small (free-tier storage).
       payload: {
-        ...payload,
+        from: message.from,
+        message_id: message.id ?? null,
+        type: message.type ?? null,
         _reply_context_message_id: replyContextId,
         _reply_classification: classification.category,
         _reply_linked_outbound_message_id: classification.linkedOutboundMessageId,

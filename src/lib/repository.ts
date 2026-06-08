@@ -997,6 +997,11 @@ function asJsonMap(value: unknown): JsonMap {
 }
 
 function extractUnknownSenderFromPayload(payload: JsonMap): string | null {
+  // Compact (trimmed) inbound payloads store the sender at the top level.
+  const directFrom = payload.from;
+  if (typeof directFrom === "string" && directFrom.trim()) return directFrom.trim();
+
+  // Legacy rows stored the full webhook envelope.
   const directMessages = payload.messages;
   if (Array.isArray(directMessages)) {
     const from = asJsonMap(directMessages[0]).from;
