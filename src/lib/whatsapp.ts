@@ -37,6 +37,13 @@ function assertRecipientAllowed(toE164: string): void {
   }
 }
 
+// WhatsApp rejects newline/tab characters and >4 consecutive spaces inside
+// template body parameters (error 132018). Flatten parameter text so dynamic,
+// multi-line content (e.g. schedule body text) still delivers.
+function sanitizeTemplateParamText(text: string): string {
+  return text.replace(/[\r\n\t]+/g, " ").replace(/ {2,}/g, " ").trim();
+}
+
 async function send(body: Record<string, unknown>): Promise<{ id?: string }> {
   const response = await fetch(baseUrl, {
     method: "POST",
@@ -94,7 +101,7 @@ export async function sendDynamicTemplateMessage(input: SendDynamicTemplateInput
             type: "body",
             parameters: input.bodyParameters.map((item) => ({
               type: "text",
-              text: item.text,
+              text: sanitizeTemplateParamText(item.text),
               ...(item.parameterName ? { parameter_name: item.parameterName } : {}),
             })),
           },
