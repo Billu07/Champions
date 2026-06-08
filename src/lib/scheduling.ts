@@ -56,6 +56,17 @@ function scheduleBodyParameters(employeeName: string, bodyText: string): Array<{
   ];
 }
 
+// Compact, human-readable summary of why sends failed, stored on the job_run note
+// so failures are diagnosable without digging through serverless logs.
+function summarizeFailureReasons(reasons: Map<string, number>): string {
+  if (reasons.size === 0) return "";
+  const parts = Array.from(reasons.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([reason, count]) => `${count}x ${reason.slice(0, 80)}`);
+  return ` | ${parts.join("; ")}`;
+}
+
 function formatInboundFragment(message: WhatsAppInboundMessage): string {
   const text = message.text?.body?.trim() ?? "";
   if (message.type === "location" && message.location) {
@@ -273,6 +284,7 @@ async function runLegacyScheduledSlot(slot: LegacySlotKey, now = new Date()) {
 
     let sent = 0;
     let failed = 0;
+    const failureReasons = new Map<string, number>();
 
     await mapWithConcurrency(employees, SCHEDULED_SEND_CONCURRENCY, async (employee) => {
       try {
@@ -305,17 +317,23 @@ async function runLegacyScheduledSlot(slot: LegacySlotKey, now = new Date()) {
         sent += 1;
       } catch (error) {
         failed += 1;
+        const reason = (error as Error).message || "unknown error";
+        failureReasons.set(reason, (failureReasons.get(reason) ?? 0) + 1);
         logError("Scheduled send failed for employee", {
           employeeId: employee.id,
           slot,
           trackingDate,
-          error: (error as Error).message,
+          error: reason,
         });
       }
     });
 
     const testNote = isWhatsAppTestAllowlistEnabled() ? `,test_allowlist=${employees.length}` : "";
-    await completeJobRun(jobKey, "success", `sent=${sent},failed=${failed}${testNote}`);
+    await completeJobRun(
+      jobKey,
+      "success",
+      `sent=${sent},failed=${failed}${testNote}${summarizeFailureReasons(failureReasons)}`,
+    );
     return { skipped: false, sent, failed };
   } catch (error) {
     await completeJobRun(jobKey, "failed", (error as Error).message);
@@ -359,6 +377,7 @@ async function runScheduleLabEntry(entry: ScheduleLabEntry, now = new Date()) {
 
     let sent = 0;
     let failed = 0;
+    const failureReasons = new Map<string, number>();
 
     await mapWithConcurrency(employees, SCHEDULED_SEND_CONCURRENCY, async (employee) => {
       try {
@@ -393,18 +412,24 @@ async function runScheduleLabEntry(entry: ScheduleLabEntry, now = new Date()) {
         sent += 1;
       } catch (error) {
         failed += 1;
+        const reason = (error as Error).message || "unknown error";
+        failureReasons.set(reason, (failureReasons.get(reason) ?? 0) + 1);
         logError("Schedule lab send failed for employee", {
           employeeId: employee.id,
           scheduleId: entry.id,
           scheduleLabel: entry.label,
           trackingDate,
-          error: (error as Error).message,
+          error: reason,
         });
       }
     });
 
     const testNote = isWhatsAppTestAllowlistEnabled() ? `,test_allowlist=${employees.length}` : "";
-    await completeJobRun(jobKey, "success", `sent=${sent},failed=${failed}${testNote}`);
+    await completeJobRun(
+      jobKey,
+      "success",
+      `sent=${sent},failed=${failed}${testNote}${summarizeFailureReasons(failureReasons)}`,
+    );
     return { skipped: false, sent, failed, scheduleId: entry.id };
   } catch (error) {
     await completeJobRun(jobKey, "failed", (error as Error).message);
