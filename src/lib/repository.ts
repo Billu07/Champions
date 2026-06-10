@@ -1,5 +1,6 @@
 ﻿import { normalizeBangladeshPhone } from "@/lib/phone";
 import { supabaseAdmin } from "@/lib/db";
+import { env } from "@/lib/config";
 import { TRACKING_TAG_KEY } from "@/lib/constants";
 import type {
   BroadcastDeliveryLifecycleStatus,
@@ -521,7 +522,7 @@ function mapScheduleLabRow(row: Record<string, unknown>): ScheduleLabEntry {
     minuteOfDay,
     timeHHmm: minuteToHHmm(minuteOfDay),
     bodyText: String(row.body_text ?? ""),
-    templateName: String(row.template_name ?? "ceo_template"),
+    templateName: String(row.template_name ?? env.WHATSAPP_SCHEDULED_TEMPLATE_NAME),
     languageCode: String(row.language_code ?? "en"),
     isActive: Boolean(row.is_active),
     legacySlotKey: normalizeLegacySlotKeyNullable(row.legacy_slot_key),
@@ -587,7 +588,7 @@ function normalizeScheduleLabPayload(input: UpsertScheduleLabInput) {
     label: input.label.trim(),
     minute_of_day: Math.max(0, Math.min(1439, Math.floor(input.minuteOfDay))),
     body_text: input.bodyText.trim(),
-    template_name: input.templateName.trim() || "ceo_template",
+    template_name: input.templateName.trim() || env.WHATSAPP_SCHEDULED_TEMPLATE_NAME,
     language_code: input.languageCode.trim() || "en",
     is_active: input.isActive,
     legacy_slot_key: normalizeLegacySlotKeyNullable(input.legacySlotKey),
@@ -638,7 +639,7 @@ export async function updateScheduleLabEntry(
     label: patch.label ?? String(current.label ?? ""),
     minuteOfDay: patch.minuteOfDay ?? Number(current.minute_of_day ?? 0),
     bodyText: patch.bodyText ?? String(current.body_text ?? ""),
-    templateName: patch.templateName ?? String(current.template_name ?? "ceo_template"),
+    templateName: patch.templateName ?? String(current.template_name ?? env.WHATSAPP_SCHEDULED_TEMPLATE_NAME),
     languageCode: patch.languageCode ?? String(current.language_code ?? "en"),
     isActive: patch.isActive ?? Boolean(current.is_active),
     legacySlotKey: patch.legacySlotKey === undefined
