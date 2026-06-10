@@ -397,6 +397,19 @@ export async function extractInstructionRoutesWithMeta(message: string): Promise
   }
 }
 
+export async function transcribeVoiceNote(file: File): Promise<string> {
+  if (!openai) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+
+  const result = await openai.audio.transcriptions.create({
+    model: "whisper-1",
+    file,
+  });
+
+  return (result.text ?? "").trim();
+}
+
 export async function summarizeReport(
   title: string,
   context: Record<string, unknown>,
