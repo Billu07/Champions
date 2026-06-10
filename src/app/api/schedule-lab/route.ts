@@ -12,7 +12,7 @@ const createSchema = z.object({
   label: z.string().min(2).max(80),
   timeHHmm: timeSchema,
   bodyText: z.string().min(1).max(1500),
-  templateName: z.string().min(1).max(120).default(env.WHATSAPP_BROADCAST_TEMPLATE_NAME),
+  templateName: z.string().min(1).max(120).default(env.WHATSAPP_SCHEDULED_TEMPLATE_NAME),
   languageCode: z.string().min(2).max(30).default(env.WHATSAPP_BROADCAST_TEMPLATE_LANGUAGE),
   isActive: z.boolean().default(true),
   legacySlotKey: slotSchema.nullable().optional().default(null),
