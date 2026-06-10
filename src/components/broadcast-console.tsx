@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { BroadcastAudienceCategory, BroadcastPreviewRoute } from "@/lib/types";
 
 type Employee = {
@@ -310,6 +310,77 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const toastCounterRef = useRef(0);
+
+  const [isRecording, setIsRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Transcribe a recorded/uploaded voice note via Whisper and append the text to
+  // the instruction box, where it flows through the same GPT-4.1 draft pipeline.
+  const transcribeAudio = async (blob: Blob, filename: string) => {
+    setTranscribing(true);
+    setStatus("Transcribing voice note...");
+    try {
+      const form = new FormData();
+      form.append("audio", blob, filename);
+      const res = await fetch("/api/transcribe", { method: "POST", body: form });
+      const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
+      if (!res.ok) throw new Error(data.error || "Transcription failed");
+      const text = (data.text ?? "").trim();
+      if (!text) {
+        setStatus("No speech detected in the voice note.");
+        pushToast("info", "No speech detected", "The voice note had no recognizable speech.");
+        return;
+      }
+      setMessage((prev) => (prev.trim() ? `${prev.trim()}\n${text}` : text));
+      setStatus("Voice note transcribed and added to the message.");
+      pushToast("success", "Voice transcribed", "Added the transcription to your message.");
+    } catch (error) {
+      const msg = (error as Error).message || "Transcription failed";
+      setStatus(msg);
+      pushToast("error", "Transcription failed", msg);
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const type = recorder.mimeType || "audio/webm";
+        const blob = new Blob(audioChunksRef.current, { type });
+        const ext = type.includes("ogg") ? "ogg" : type.includes("mp4") ? "mp4" : "webm";
+        void transcribeAudio(blob, `voice-note.${ext}`);
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+      setStatus("Recording... tap Stop when finished.");
+    } catch {
+      pushToast("error", "Microphone blocked", "Allow microphone access to record a voice note.");
+    }
+  };
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
+    setIsRecording(false);
+  };
+
+  const onPickAudioFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) void transcribeAudio(file, file.name);
+  };
 
   const busy = previewing || sending;
   const employeesById = useMemo(
@@ -969,6 +1040,34 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
             <span className="muted">
               You can write exact broadcast text or simply instruct AI to draft it for you.
             </span>
+            <div className="inline" style={{ gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  if (isRecording) stopRecording();
+                  else void startRecording();
+                }}
+                disabled={transcribing}
+              >
+                {isRecording ? "⏹ Stop recording" : "🎙 Record voice note"}
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => audioInputRef.current?.click()}
+                disabled={isRecording || transcribing}
+              >
+                {transcribing ? "Transcribing..." : "Upload audio"}
+              </button>
+              <input
+                ref={audioInputRef}
+                type="file"
+                accept="audio/*"
+                style={{ display: "none" }}
+                onChange={onPickAudioFile}
+              />
+            </div>
           </label>
 
           <article className="panel grid broadcast-audience" style={{ gap: 10 }}>
