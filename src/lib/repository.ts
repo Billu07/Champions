@@ -78,6 +78,7 @@ let cachedEmployeeSchema: EmployeesSchemaMode | null = null;
 let cachedTagSupport: boolean | null = null;
 let cachedBroadcastDeliverySchema: BroadcastDeliverySchemaMode | null = null;
 let cachedScheduleLabSchema: ScheduleLabSchemaMode | null = null;
+let cachedScheduledDeliverySchema: ScheduleLabSchemaMode | null = null;
 
 function isMissingColumnOrTableError(error: { message?: string } | null | undefined): boolean {
   if (!error?.message) return false;
@@ -219,6 +220,142 @@ async function getScheduleLabSchemaMode(): Promise<ScheduleLabSchemaMode> {
 
 function legacyDeliveryStatus(status: BroadcastDeliveryLifecycleStatus): "sent" | "failed" {
   return status === "failed" ? "failed" : "sent";
+}
+
+async function getScheduledDeliverySchemaMode(): Promise<ScheduleLabSchemaMode> {
+  if (cachedScheduledDeliverySchema) return cachedScheduledDeliverySchema;
+
+  const probe = await supabaseAdmin.from("scheduled_deliveries").select("id").limit(1);
+  if (!probe.error) {
+    cachedScheduledDeliverySchema = "available";
+    return cachedScheduledDeliverySchema;
+  }
+  if (isMissingColumnOrTableError(probe.error)) {
+    cachedScheduledDeliverySchema = "missing";
+    return cachedScheduledDeliverySchema;
+  }
+  // Unknown error: treat as missing so scheduled sends never break on tracking.
+  cachedScheduledDeliverySchema = "missing";
+  return cachedScheduledDeliverySchema;
+}
+
+// Tracking inserts must never break a scheduled send, so this swallows errors.
+export async function insertScheduledDelivery(input: {
+  employeeId: string;
+  slotKey?: string | null;
+  trackingDate?: string | null;
+  templateName?: string | null;
+  whatsappMessageId?: string | null;
+  status: BroadcastDeliveryLifecycleStatus;
+  failureReason?: string | null;
+}): Promise<void> {
+  try {
+    if ((await getScheduledDeliverySchemaMode()) === "missing") return;
+    await supabaseAdmin.from("scheduled_deliveries").insert({
+      employee_id: input.employeeId,
+      slot_key: input.slotKey ?? null,
+      tracking_date: input.trackingDate ?? null,
+      template_name: input.templateName ?? null,
+      whatsapp_message_id: input.whatsappMessageId ?? null,
+      status: input.status,
+      failure_reason: input.failureReason ?? null,
+      last_status_at: new Date().toISOString(),
+    });
+  } catch {
+    // best-effort tracking only
+  }
+}
+
+export async function updateScheduledDeliveryStatusByMessageId(input: {
+  whatsappMessageId: string;
+  status: BroadcastDeliveryLifecycleStatus;
+  failureReason?: string | null;
+  occurredAt?: string | null;
+  payload?: Record<string, unknown>;
+}): Promise<{ updated: boolean; employeeId: string | null }> {
+  try {
+    if ((await getScheduledDeliverySchemaMode()) === "missing") {
+      return { updated: false, employeeId: null };
+    }
+    const existing = await supabaseAdmin
+      .from("scheduled_deliveries")
+      .select("id,employee_id,status")
+      .eq("whatsapp_message_id", input.whatsappMessageId)
+      .maybeSingle();
+    if (existing.error || !existing.data?.id) return { updated: false, employeeId: null };
+
+    const currentStatus = existing.data.status as BroadcastDeliveryLifecycleStatus;
+    const shouldUpdate = input.status === "failed" || statusRank(input.status) >= statusRank(currentStatus);
+    if (shouldUpdate) {
+      await supabaseAdmin
+        .from("scheduled_deliveries")
+        .update({
+          status: input.status,
+          failure_reason: input.failureReason ?? null,
+          last_status_at: input.occurredAt ?? new Date().toISOString(),
+          status_payload: input.payload ?? {},
+        })
+        .eq("id", existing.data.id);
+    }
+    return { updated: shouldUpdate, employeeId: (existing.data.employee_id as string | null) ?? null };
+  } catch {
+    return { updated: false, employeeId: null };
+  }
+}
+
+export async function getScheduledDeliverySummary(trackingDate: string): Promise<{
+  trackingDate: string;
+  slots: Array<{
+    slotKey: string;
+    total: number;
+    delivered: number;
+    accepted: number;
+    failed: number;
+    deliveryRatePct: number;
+  }>;
+}> {
+  if ((await getScheduledDeliverySchemaMode()) === "missing") {
+    return { trackingDate, slots: [] };
+  }
+
+  const res = await supabaseAdmin
+    .from("scheduled_deliveries")
+    .select("slot_key,status,whatsapp_message_id,created_at")
+    .eq("tracking_date", trackingDate)
+    .order("created_at", { ascending: true });
+  ensureNoError(res.error, "Failed to load scheduled deliveries");
+
+  // Collapse to the most-advanced status per (slot, message id).
+  const best = new Map<string, { slot: string; status: BroadcastDeliveryLifecycleStatus }>();
+  for (const row of (res.data ?? []) as Array<Record<string, unknown>>) {
+    const slot = String(row.slot_key ?? "unknown");
+    const wamid = String(row.whatsapp_message_id ?? "");
+    const key = `${slot}:${wamid || Math.random()}`;
+    const status = String(row.status ?? "accepted") as BroadcastDeliveryLifecycleStatus;
+    const cur = best.get(key);
+    if (!cur || statusRank(status) >= statusRank(cur.status)) best.set(key, { slot, status });
+  }
+
+  const bySlot = new Map<string, { total: number; delivered: number; accepted: number; failed: number }>();
+  for (const { slot, status } of best.values()) {
+    const agg = bySlot.get(slot) ?? { total: 0, delivered: 0, accepted: 0, failed: 0 };
+    agg.total += 1;
+    if (status === "delivered" || status === "read") agg.delivered += 1;
+    else if (status === "failed") agg.failed += 1;
+    else agg.accepted += 1; // accepted or sent, but not confirmed delivered
+    bySlot.set(slot, agg);
+  }
+
+  const slots = [...bySlot.entries()].map(([slotKey, agg]) => ({
+    slotKey,
+    total: agg.total,
+    delivered: agg.delivered,
+    accepted: agg.accepted,
+    failed: agg.failed,
+    deliveryRatePct: agg.total > 0 ? Number(((agg.delivered / agg.total) * 100).toFixed(1)) : 0,
+  }));
+
+  return { trackingDate, slots };
 }
 
 async function fetchEmployees(options?: {
