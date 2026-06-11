@@ -1181,7 +1181,7 @@ async function buildTeamRangeReport(input: {
     title: input.title,
     metrics: teamMetrics,
     narrative,
-    modelName: env.GEMINI_MODEL,
+    modelName: env.OPENAI_MODEL,
   });
 
   return teamMetrics;
@@ -1238,7 +1238,7 @@ export async function generateDailyReports(reportDate: string) {
         title: `Daily compliance report - ${employeeName}`,
         metrics,
         narrative,
-        modelName: env.GEMINI_MODEL,
+        modelName: env.OPENAI_MODEL,
       });
       individualCreated += 1;
     } catch (error) {
@@ -1281,7 +1281,7 @@ export async function generateDailyReports(reportDate: string) {
       title: `Team daily executive summary - ${reportDate}`,
       metrics: teamMetrics,
       narrative: teamNarrative,
-      modelName: env.GEMINI_MODEL,
+      modelName: env.OPENAI_MODEL,
     });
   } catch (error) {
     failures.push({ reason: `Team report insert failed: ${(error as Error).message}` });
