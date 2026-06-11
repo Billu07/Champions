@@ -72,6 +72,21 @@ type ToastItem = {
   message: string;
 };
 
+type DeliveryRecipient = {
+  employeeId: string;
+  fullName: string;
+  status: string;
+  failureReason: string | null;
+  channel: string | null;
+};
+
+type DeliveryInfo = {
+  total: number;
+  undelivered: number;
+  counts: Record<string, number>;
+  recipients: DeliveryRecipient[];
+};
+
 const targetModeOptions: Array<{ value: TargetMode; label: string }> = [
   { value: "mixed", label: "Mixed (AI)" },
   { value: "group", label: "Group" },
@@ -382,6 +397,50 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
     if (file) void transcribeAudio(file, file.name);
   };
 
+  const [lastCampaignId, setLastCampaignId] = useState<string>("");
+  const [deliveryInfo, setDeliveryInfo] = useState<DeliveryInfo | null>(null);
+  const [checkingDelivery, setCheckingDelivery] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+
+  const checkDelivery = async (campaignId: string) => {
+    if (!campaignId) return;
+    setCheckingDelivery(true);
+    try {
+      const res = await fetch(`/api/broadcasts/deliveries?campaignId=${encodeURIComponent(campaignId)}`);
+      const data = (await res.json().catch(() => ({}))) as DeliveryInfo & { error?: string };
+      if (!res.ok) throw new Error(data.error || "Failed to load delivery status");
+      setDeliveryInfo(data);
+    } catch (error) {
+      pushToast("error", "Delivery status failed", (error as Error).message);
+    } finally {
+      setCheckingDelivery(false);
+    }
+  };
+
+  const resendUndelivered = async () => {
+    if (!lastCampaignId) return;
+    setRetrying(true);
+    try {
+      const res = await fetch("/api/broadcasts/retry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaignId: lastCampaignId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { retried?: number; accepted?: number; failed?: number; error?: string };
+      if (!res.ok) throw new Error(data.error || "Retry failed");
+      if (Number(data.retried ?? 0) === 0) {
+        pushToast("info", "Nothing to resend", "All recipients are already delivered.");
+      } else {
+        pushToast("success", "Resent to undelivered", `Re-sent ${data.retried}: accepted ${data.accepted}, failed ${data.failed}.`);
+      }
+      await checkDelivery(lastCampaignId);
+    } catch (error) {
+      pushToast("error", "Resend failed", (error as Error).message);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   const busy = previewing || sending;
   const employeesById = useMemo(
     () => new Map(initialEmployees.map((employee) => [employee.id, employee])),
@@ -656,6 +715,11 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
   }
 
   function applySendResponse(json: Record<string, unknown>) {
+    const campaignId = String((json as { campaignId?: string }).campaignId ?? "");
+    if (campaignId) {
+      setLastCampaignId(campaignId);
+      setDeliveryInfo(null);
+    }
     const accepted = Number(
       (json as { accepted?: number; sent?: number }).accepted ??
         (json as { sent?: number }).sent ??
@@ -1266,6 +1330,45 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
             )}
           </article>
         </form>
+
+        {lastCampaignId ? (
+          <article className="panel grid" style={{ gap: 10 }}>
+            <div className="inline" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <span className="muted" style={{ fontWeight: 700 }}>Delivery status (last broadcast)</span>
+              <div className="inline" style={{ gap: 8 }}>
+                <button type="button" className="ghost" onClick={() => void checkDelivery(lastCampaignId)} disabled={checkingDelivery || retrying}>
+                  {checkingDelivery ? "Checking..." : "Check delivery"}
+                </button>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => void resendUndelivered()}
+                  disabled={retrying || checkingDelivery || (deliveryInfo !== null && deliveryInfo.undelivered === 0)}
+                  title="Re-send to recipients not yet delivered (free-form if in 24h window, else template)"
+                >
+                  {retrying ? "Resending..." : "Resend to undelivered"}
+                </button>
+              </div>
+            </div>
+            {deliveryInfo ? (
+              <div className="grid" style={{ gap: 6 }}>
+                <span className="muted">
+                  {deliveryInfo.total} recipient(s) · delivered {(deliveryInfo.counts.delivered ?? 0) + (deliveryInfo.counts.read ?? 0)} · accepted {deliveryInfo.counts.accepted ?? 0} · failed {deliveryInfo.counts.failed ?? 0} · undelivered {deliveryInfo.undelivered}
+                </span>
+                {deliveryInfo.recipients
+                  .filter((row) => row.status === "accepted" || row.status === "failed")
+                  .slice(0, 25)
+                  .map((row) => (
+                    <span key={row.employeeId} className="muted" style={{ fontSize: 12 }}>
+                      • {row.fullName} — {row.status}{row.failureReason ? `: ${row.failureReason}` : ""}
+                    </span>
+                  ))}
+              </div>
+            ) : (
+              <span className="muted">Check delivery to see who received it; resend to recover any that didn&apos;t.</span>
+            )}
+          </article>
+        ) : null}
       </article>
 
       {previewModalOpen && preview ? (

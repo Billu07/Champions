@@ -1517,6 +1517,59 @@ export async function listRecentBroadcastCampaigns(limit = 25) {
   });
 }
 
+export type BroadcastDeliveryBreakdownRow = {
+  employeeId: string;
+  fullName: string;
+  status: BroadcastDeliveryLifecycleStatus;
+  failureReason: string | null;
+  channel: string | null;
+};
+
+export async function getBroadcastCampaignFinalMessage(campaignId: string): Promise<string | null> {
+  const res = await supabaseAdmin
+    .from("broadcast_campaigns")
+    .select("final_message")
+    .eq("id", campaignId)
+    .maybeSingle();
+  ensureNoError(res.error, "Failed to load broadcast campaign");
+  return (res.data?.final_message as string | undefined)?.trim() || null;
+}
+
+// Per-recipient delivery state for a campaign, collapsed to each recipient's
+// most-advanced status (a recipient can have several delivery rows after retries).
+export async function getBroadcastDeliveryBreakdown(campaignId: string): Promise<BroadcastDeliveryBreakdownRow[]> {
+  const res = await supabaseAdmin
+    .from("broadcast_deliveries")
+    .select("employee_id,status,failure_reason,status_payload,created_at")
+    .eq("campaign_id", campaignId)
+    .order("created_at", { ascending: true });
+  ensureNoError(res.error, "Failed to load broadcast deliveries");
+
+  const best = new Map<string, { status: BroadcastDeliveryLifecycleStatus; failureReason: string | null; channel: string | null }>();
+  for (const row of (res.data ?? []) as Array<Record<string, unknown>>) {
+    const employeeId = row.employee_id ? String(row.employee_id) : null;
+    if (!employeeId) continue;
+    const status = String(row.status ?? "accepted") as BroadcastDeliveryLifecycleStatus;
+    const channel = (row.status_payload as { channel?: string } | null)?.channel ?? null;
+    const failureReason = row.failure_reason ? String(row.failure_reason) : null;
+    const current = best.get(employeeId);
+    if (!current || statusRank(status) >= statusRank(current.status)) {
+      best.set(employeeId, { status, failureReason, channel });
+    }
+  }
+
+  const employees = await getEmployeesByIds([...best.keys()]);
+  const nameById = new Map(employees.map((employee) => [employee.id, employee.full_name]));
+
+  return [...best.entries()].map(([employeeId, value]) => ({
+    employeeId,
+    fullName: nameById.get(employeeId) ?? "Unknown",
+    status: value.status,
+    failureReason: value.failureReason,
+    channel: value.channel,
+  }));
+}
+
 export async function getOpsDashboardMetrics(
   trackingDate: string,
   options?: { includeTestScheduler?: boolean },
