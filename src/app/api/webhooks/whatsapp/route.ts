@@ -5,6 +5,7 @@ import {
   insertBroadcastDeliveryEvent,
   insertMessageEvent,
   updateBroadcastDeliveryStatusByMessageId,
+  updateScheduledDeliveryStatusByMessageId,
 } from "@/lib/repository";
 import type { BroadcastDeliveryLifecycleStatus } from "@/lib/types";
 
@@ -97,6 +98,18 @@ export async function POST(request: Request) {
         occurredAt,
         payload: compactStatus(status),
       });
+
+      // Scheduled messages track delivery in their own table; the message id
+      // belongs to one or the other, so the non-matching update is a no-op.
+      if (!updated.deliveryId) {
+        await updateScheduledDeliveryStatusByMessageId({
+          whatsappMessageId: messageId,
+          status: normalized,
+          failureReason,
+          occurredAt,
+          payload: compactStatus(status),
+        });
+      }
 
       await insertBroadcastDeliveryEvent({
         deliveryId: updated.deliveryId,

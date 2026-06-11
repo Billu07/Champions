@@ -14,6 +14,7 @@ import {
   getTemplateBySlot,
   getTrackedEmployees,
   insertMessageEvent,
+  insertScheduledDelivery,
   listDueActiveScheduleLabEntries,
   type ScheduleLabEntry,
   listRecentInboundClassifiedRepliesForEmployee,
@@ -314,11 +315,28 @@ async function runLegacyScheduledSlot(slot: LegacySlotKey, now = new Date()) {
           messageText: `[template] ${template.template_name}`,
         });
 
+        await insertScheduledDelivery({
+          employeeId: employee.id,
+          slotKey: slot,
+          trackingDate,
+          templateName: template.template_name,
+          whatsappMessageId: response.id ?? null,
+          status: "accepted",
+        });
+
         sent += 1;
       } catch (error) {
         failed += 1;
         const reason = (error as Error).message || "unknown error";
         failureReasons.set(reason, (failureReasons.get(reason) ?? 0) + 1);
+        await insertScheduledDelivery({
+          employeeId: employee.id,
+          slotKey: slot,
+          trackingDate,
+          templateName: template.template_name,
+          status: "failed",
+          failureReason: reason,
+        });
         logError("Scheduled send failed for employee", {
           employeeId: employee.id,
           slot,
@@ -409,11 +427,28 @@ async function runScheduleLabEntry(entry: ScheduleLabEntry, now = new Date()) {
           messageText: `[schedule] ${entry.label}`,
         });
 
+        await insertScheduledDelivery({
+          employeeId: employee.id,
+          slotKey: entry.reportSlotKey,
+          trackingDate: entry.reportSlotKey ? trackingDate : null,
+          templateName: entry.templateName,
+          whatsappMessageId: response.id ?? null,
+          status: "accepted",
+        });
+
         sent += 1;
       } catch (error) {
         failed += 1;
         const reason = (error as Error).message || "unknown error";
         failureReasons.set(reason, (failureReasons.get(reason) ?? 0) + 1);
+        await insertScheduledDelivery({
+          employeeId: employee.id,
+          slotKey: entry.reportSlotKey,
+          trackingDate: entry.reportSlotKey ? trackingDate : null,
+          templateName: entry.templateName,
+          status: "failed",
+          failureReason: reason,
+        });
         logError("Schedule lab send failed for employee", {
           employeeId: employee.id,
           scheduleId: entry.id,
