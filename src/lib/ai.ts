@@ -91,8 +91,8 @@ function prefersEnglish(input: string): boolean {
 
 function languageDirective(input: string): string {
   return prefersEnglish(input)
-    ? "Write the message in English."
-    : "Write the message in natural, everyday Bangla (Bangla script). Keep common English business words people normally use.";
+    ? "The CEO explicitly asked for English, so write the message in English."
+    : "Write the message in simple, natural, everyday Bengali (Bangla script), in the warm and visionary-yet-simple voice of the writer Humayun Ahmed. Keep common English business words people normally use.";
 }
 
 function detectInstructionStyle(input: string): boolean {
@@ -116,17 +116,21 @@ function detectInstructionStyle(input: string): boolean {
 }
 
 const COMPOSE_SYSTEM = [
-  'You are an expert communications assistant who drafts WhatsApp messages on behalf of the CEO of "Champions Family", a Bangladeshi field-sales company, to the team.',
-  "The CEO gives you a short instruction, idea, or rough notes. Turn it into a complete, polished, ready-to-send message — the way a thoughtful human leader writes, and the way a strong conversational AI does: natural, warm, and genuinely engaging, with real substance.",
+  'You are an expert communications writer drafting WhatsApp broadcast messages on behalf of the CEO of "Champions Family", a Bangladeshi field-sales company, to the team.',
+  "From the CEO's short instruction or idea, write ONE complete, ready-to-send broadcast message.",
   "",
-  "How to write:",
-  "- Develop the idea fully. Open with a natural human line, explain the point with helpful context and detail, and close with a clear, motivating call to action.",
-  "- Use natural paragraphs and line breaks for readability.",
-  "- Let length follow substance: a simple notice can be a few lines; a motivational or explanatory message can run several short paragraphs. Never pad with empty filler.",
-  "- Sound human and conversational, never corporate or robotic.",
+  "Language & voice (very important):",
+  "- Write in simple, natural, everyday Bengali (Bangla script), in the spirit of the writer Humayun Ahmed: warm, human, visionary yet effortlessly simple. Short, clear sentences anyone on the team instantly understands. Emotionally resonant, never flowery, heavy, or corporate.",
+  "- Use English ONLY if the CEO's instruction explicitly asks for English. Even if the instruction itself is written in English or romanized Bengali, the final message must be in Bengali unless English is explicitly requested.",
+  "- You may keep common English business words people normally use (target, team, sales, etc.).",
+  "",
+  "Depth & shape:",
+  "- Develop the idea fully and generously: a natural human opening, the core message explained with real substance and a touch of vision, and a clear, motivating close or call to action.",
+  "- Write a rich, detailed message — several short paragraphs — not a terse note. Use natural line breaks so it is easy to read on WhatsApp.",
+  "- Sound like a thoughtful leader speaking to people he genuinely cares about.",
   "",
   "Hard rules:",
-  "- Preserve the CEO's intent, facts, names, numbers, and specific instructions exactly. Never invent facts, figures, deadlines, names, or promises the CEO did not give.",
+  "- Preserve the CEO's intent, facts, names, numbers, and instructions exactly. Never invent facts, figures, deadlines, names, or promises the CEO did not give.",
   "- Output ONLY the final message text. No preamble, no quotation marks, no notes about what you did.",
 ].join("\n");
 
@@ -225,6 +229,7 @@ export async function buildCeoBroadcastDraftWithMeta(input: AiBroadcastDraftInpu
           `CEO instruction:\n${message}`,
         ].join("\n"),
         temperature: 0.6,
+        maxTokens: 2000,
       });
 
   try {
@@ -341,22 +346,23 @@ export async function extractInstructionRoutesWithMeta(message: string): Promise
     "You parse a CEO's WhatsApp instruction into one or more targeted routes. Return strict JSON only.",
     "Valid group targets: sales_team, head_office, drivers, customers, all.",
     "Use targetType=person when a specific person is named; otherwise targetType=group.",
-    "Write each route.message as a complete, natural, ready-to-send WhatsApp message for that target, in the same language as the instruction (Bangla by default; English if the instruction is in English).",
-    "Develop the message naturally and conversationally with real substance; do not add facts, names, numbers, or deadlines the CEO did not give.",
+    "For each route, write route.message as a COMPLETE, detailed, ready-to-send broadcast message for that target.",
+    "Language & voice: write in simple, natural, everyday Bengali (Bangla script) in the spirit of the writer Humayun Ahmed — warm, human, visionary yet effortlessly simple, with short clear sentences anyone understands. Use English ONLY if the CEO explicitly asks for English; even if the instruction is in English or romanized Bengali, the message must be Bengali unless English is explicitly requested.",
+    "Develop each message fully (a natural opening, the core point with real substance and a touch of vision, and a motivating close) — make it rich and detailed, several short paragraphs as warranted, not a terse line. Do not add facts, names, numbers, or deadlines the CEO did not give.",
   ].join("\n");
 
   const user = [
     "Return strict JSON only with this shape:",
     '{"routes":[{"targetType":"person|group","target":"string","message":"string","confidence":0.0}]}',
     "Rules:",
-    "- Each route.message is specific to only that target and ready to send as-is.",
+    "- Each route.message is specific to only that target and ready to send as-is, written in detailed, simple Bengali (Humayun Ahmed voice) unless English is explicitly requested.",
     "- If a route does not map to a valid group target, keep it as targetType=person.",
     "- Confidence must be between 0 and 1.",
     `Message:\n${message}`,
   ].join("\n");
 
   try {
-    const output = await runOpenAI({ system, user, json: true, temperature: 0.4 });
+    const output = await runOpenAI({ system, user, json: true, temperature: 0.5, maxTokens: 3000 });
     const parsed = JSON.parse(output) as { routes?: AiInstructionRoute[] };
     const cleaned = (parsed.routes ?? [])
       .map((route) => {
