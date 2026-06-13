@@ -58,6 +58,18 @@ function resolveEmployeeName(report: Report): string {
   return report.employees.full_name ?? "";
 }
 
+// Final performance score for filtering/sorting: per-employee for individual
+// reports, team average for team reports. Null when the report has no score.
+function reportPerformanceScore(report: Report): number | null {
+  const metrics = asRecord(report.metrics);
+  if (report.kind === "individual_daily") {
+    const summary = asRecord(metrics.summary);
+    return "performanceScorePct" in summary ? asNumber(summary.performanceScorePct) : null;
+  }
+  const kpi = asRecord(metrics.kpi);
+  return "averagePerformanceScorePct" in kpi ? asNumber(kpi.averagePerformanceScorePct) : null;
+}
+
 function formatDate(date: string): string {
   const parsed = new Date(date);
   if (Number.isNaN(parsed.getTime())) return date;
@@ -198,6 +210,10 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [search, setSearch] = useState("");
+  const [employeeFilter, setEmployeeFilter] = useState("");
+  const [perfMin, setPerfMin] = useState("");
+  const [perfMax, setPerfMax] = useState("");
+  const [sortBy, setSortBy] = useState<"date" | "perf_asc" | "perf_desc">("date");
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
@@ -371,21 +387,62 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
     }
   }
 
+  const employeeOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const report of reports) {
+      const name = resolveEmployeeName(report);
+      if (name) names.add(name);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [reports]);
+
   const filteredReports = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return reports;
+    const min = perfMin.trim() === "" ? null : Number(perfMin);
+    const max = perfMax.trim() === "" ? null : Number(perfMax);
+    const hasMin = min !== null && Number.isFinite(min);
+    const hasMax = max !== null && Number.isFinite(max);
 
-    return reports.filter((report) => {
-      const employee = resolveEmployeeName(report);
-      return (
-        report.title.toLowerCase().includes(q) ||
-        report.narrative.toLowerCase().includes(q) ||
-        report.kind.toLowerCase().includes(q) ||
-        report.report_date.includes(q) ||
-        employee.toLowerCase().includes(q)
-      );
+    const result = reports.filter((report) => {
+      if (employeeFilter && resolveEmployeeName(report) !== employeeFilter) return false;
+
+      if (hasMin || hasMax) {
+        const score = reportPerformanceScore(report);
+        if (score === null) return false;
+        if (hasMin && score < (min as number)) return false;
+        if (hasMax && score > (max as number)) return false;
+      }
+
+      if (q) {
+        const employee = resolveEmployeeName(report);
+        const matches =
+          report.title.toLowerCase().includes(q) ||
+          report.narrative.toLowerCase().includes(q) ||
+          report.kind.toLowerCase().includes(q) ||
+          report.report_date.includes(q) ||
+          employee.toLowerCase().includes(q);
+        if (!matches) return false;
+      }
+
+      return true;
     });
-  }, [reports, search]);
+
+    if (sortBy === "date") {
+      result.sort((a, b) => (a.report_date < b.report_date ? 1 : a.report_date > b.report_date ? -1 : 0));
+    } else {
+      const dir = sortBy === "perf_asc" ? 1 : -1;
+      result.sort((a, b) => {
+        const sa = reportPerformanceScore(a);
+        const sb = reportPerformanceScore(b);
+        if (sa === null && sb === null) return 0;
+        if (sa === null) return 1; // reports without a score sort last
+        if (sb === null) return -1;
+        return (sa - sb) * dir;
+      });
+    }
+
+    return result;
+  }, [reports, search, employeeFilter, perfMin, perfMax, sortBy]);
 
   const summary = useMemo(() => {
     return {
@@ -450,9 +507,77 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
           </label>
         </div>
 
+        <div className="row">
+          <label className="col-3 grid" style={{ gap: 6 }}>
+            <span>Employee</span>
+            <select
+              value={employeeFilter}
+              onChange={(event) => {
+                setEmployeeFilter(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All employees</option>
+              {employeeOptions.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="col-3 grid" style={{ gap: 6 }}>
+            <span>Performance min %</span>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              max={100}
+              value={perfMin}
+              onChange={(event) => {
+                setPerfMin(event.target.value);
+                setPage(1);
+              }}
+              placeholder="e.g. 0"
+            />
+          </label>
+
+          <label className="col-3 grid" style={{ gap: 6 }}>
+            <span>Performance max %</span>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              max={100}
+              value={perfMax}
+              onChange={(event) => {
+                setPerfMax(event.target.value);
+                setPage(1);
+              }}
+              placeholder="e.g. 65 (at-risk)"
+            />
+          </label>
+
+          <label className="col-3 grid" style={{ gap: 6 }}>
+            <span>Sort</span>
+            <select
+              value={sortBy}
+              onChange={(event) => {
+                setSortBy(event.target.value as "date" | "perf_asc" | "perf_desc");
+                setPage(1);
+              }}
+            >
+              <option value="date">Newest first</option>
+              <option value="perf_asc">Performance: low → high</option>
+              <option value="perf_desc">Performance: high → low</option>
+            </select>
+          </label>
+        </div>
+
         <div className="inline" style={{ justifyContent: "space-between" }}>
           <div className="inline">
             <button onClick={() => void loadReports()}>Apply Filters</button>
+            <span className="muted" style={{ fontSize: 12 }}>
+              Type &amp; dates load from the server; employee, performance, sort &amp; search filter instantly.
+            </span>
           </div>
           <span className="muted">
             {status || "Each report is exported as a separate branded PDF from its own card."}
