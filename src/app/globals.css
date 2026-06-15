@@ -1239,11 +1239,20 @@ details summary {
 }
 
 .broadcast-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
   display: flex;
   justify-content: flex-end;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  margin: 8px -18px 0;
+  padding: 12px 18px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: saturate(140%) blur(8px);
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
 /* Audience modes as a sleek segmented control instead of stacked buttons. */
