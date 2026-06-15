@@ -1455,8 +1455,9 @@ details summary {
     font-size: 24px;
   }
 
-  /* Reports filters 2-up so the filter panel isn't a long scroll on phones. */
-  .reports-filters .col-3 {
+  /* Reports + directory filters 2-up (horizontal) instead of a tall stack. */
+  .reports-filters .col-3,
+  .directory-panel .col-3 {
     grid-column: span 6;
   }
 
