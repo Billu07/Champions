@@ -307,9 +307,12 @@ export async function buildBroadcastPreview(
     ? (routeDraftMessages[0] ?? "")
     : routeDraftMessages.join("\n");
 
+  // While regenerating, always run the edit — a route-extraction hiccup must not
+  // silently skip applying the user's re-instruction to the existing draft.
+  const isRegenerating = Boolean(input.aiRegenerateInstruction?.trim());
   const shouldSkipDraftAi = hasStrongAiRouteDraft ||
-    isQuotaError(aiRouteResult.meta.error) ||
-    isTransientAiConnectivityError(aiRouteResult.meta.error);
+    (!isRegenerating &&
+      (isQuotaError(aiRouteResult.meta.error) || isTransientAiConnectivityError(aiRouteResult.meta.error)));
 
   const draftResult = shouldSkipDraftAi
     ? {
@@ -340,7 +343,10 @@ export async function buildBroadcastPreview(
   const finalMessageForFallbackRoutes = draftResult.text.trim() || input.message.trim();
 
   for (const route of previewRoutes) {
-    if (route.source === "ai_group" || route.source === "ai_person") continue;
+    // On regeneration the user is refining the single drafted message, so apply
+    // the edited text to every route — don't let freshly re-extracted route text
+    // discard the user's edit.
+    if (!isRegenerating && (route.source === "ai_group" || route.source === "ai_person")) continue;
     route.instruction = finalMessageForFallbackRoutes;
   }
 
