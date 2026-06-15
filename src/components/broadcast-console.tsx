@@ -503,37 +503,8 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
     () => previewScopedCandidates.filter((employee) => employeeMatchesQuery(employee, previewRecipientSearch)),
     [previewRecipientSearch, previewScopedCandidates],
   );
-  const previewRecipientRouteMap = useMemo(() => {
-    const map = new Map<string, string[]>();
-    if (!preview) return map;
-
-    for (const route of preview.routes) {
-      for (const employeeId of route.recipientEmployeeIds) {
-        const list = map.get(employeeId) ?? [];
-        if (!list.includes(route.targetLabel)) {
-          list.push(route.targetLabel);
-        }
-        map.set(employeeId, list);
-      }
-    }
-
-    return map;
-  }, [preview]);
-  const previewRouteSelectedCounts = useMemo(() => {
-    const map = new Map<string, number>();
-    if (!preview) return map;
-
-    for (const route of preview.routes) {
-      const selectedCount = route.recipientEmployeeIds.filter((id) => previewSelectedSet.has(id)).length;
-      map.set(route.routeId, selectedCount);
-    }
-
-    return map;
-  }, [preview, previewSelectedSet]);
   const previewRecipientCount = previewSelectedRecipientIds.length;
   const previewScopedSelectedCount = previewScopedCandidateIds.filter((id) => previewSelectedSet.has(id)).length;
-  const previewRouteCount = preview?.routes.length ?? 0;
-  const aiWarnings = previewWarnings(preview);
 
   useEffect(() => {
     if (!previewModalOpen) return;
@@ -1401,27 +1372,8 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
               </button>
             </div>
 
-            <div className="broadcast-modal-metrics">
-              <article className="broadcast-metric-card">
-                <p className="kpi-label">Recipients</p>
-                <p className="kpi-value" style={{ fontSize: 24 }}>{previewRecipientCount}</p>
-              </article>
-              <article className="broadcast-metric-card">
-                <p className="kpi-label">Routes</p>
-                <p className="kpi-value" style={{ fontSize: 24 }}>{previewRouteCount}</p>
-              </article>
-              <article className="broadcast-metric-card">
-                <p className="kpi-label">Template</p>
-                <p className="kpi-sub" style={{ color: "#14395e", fontWeight: 700 }}>{templateName}</p>
-              </article>
-              <article className="broadcast-metric-card">
-                <p className="kpi-label">AI Mode</p>
-                <p className="kpi-sub" style={{ color: "#14395e", fontWeight: 700 }}>{draftModeLabel(preview)}</p>
-              </article>
-            </div>
-
             <label className="grid" style={{ gap: 6 }}>
-              <span>Final Message (Editable)</span>
+              <span>Message</span>
               <textarea
                 value={reviewedMessage}
                 onChange={(event) => setReviewedMessage(event.target.value)}
@@ -1451,9 +1403,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
                 ))}
               </div>
 
-              <span className="muted">
-                Change audience or unselect members here if AI/user targeting was incorrect. This applies to this send.
-              </span>
+              <span className="muted">Adjust who receives this send.</span>
 
               <input
                 className="input"
@@ -1488,7 +1438,6 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
                       <th style={{ minWidth: 160 }}>Department</th>
                       <th style={{ minWidth: 170 }}>Designation</th>
                       <th style={{ minWidth: 170 }}>WhatsApp</th>
-                      <th style={{ minWidth: 190 }}>Route Context</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1506,7 +1455,6 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
                         <td>{employee.department || "-"}</td>
                         <td>{employee.designation || "-"}</td>
                         <td>{employee.whatsapp_e164}</td>
-                        <td>{(previewRecipientRouteMap.get(employee.id) ?? ["Manual override"]).join(", ")}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1532,39 +1480,11 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
               </div>
             </div>
 
-            <div className="table-wrap" style={{ maxHeight: 240, overflowY: "auto" }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th style={{ minWidth: 220 }}>Target</th>
-                    <th style={{ minWidth: 140 }}>Source</th>
-                    <th style={{ minWidth: 140 }}>Recipients</th>
-                    <th style={{ minWidth: 120 }}>Confidence</th>
-                    <th style={{ minWidth: 260 }}>Route Message</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.routes.map((route) => (
-                    <tr key={route.routeId}>
-                      <td>{route.targetLabel}</td>
-                      <td>{route.source}</td>
-                      <td>{previewRouteSelectedCounts.get(route.routeId) ?? 0}</td>
-                      <td>{Math.round(route.confidence * 100)}%</td>
-                      <td>{route.instruction}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
             {preview.unresolvedMentions.length ? (
               <p className="muted">Unresolved mentions: {preview.unresolvedMentions.join(", ")}</p>
             ) : null}
             {preview.unresolvedAiTargets.length ? (
-              <p className="muted">Unresolved AI targets: {preview.unresolvedAiTargets.join(", ")}</p>
-            ) : null}
-            {aiWarnings.length ? (
-              <p className="muted">AI diagnostics: {aiWarnings.join(" | ")}</p>
+              <p className="muted">Couldn&apos;t match: {preview.unresolvedAiTargets.join(", ")}</p>
             ) : null}
 
             <div className="inline broadcast-modal-actions" style={{ justifyContent: "space-between" }}>
