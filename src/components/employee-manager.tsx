@@ -887,7 +887,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
           </label>
         </div>
 
-        <div className="table-wrap">
+        <div className="table-wrap mobile-cards">
           <table>
             <thead>
               <tr>
@@ -912,13 +912,13 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
                       onChange={(event) => toggleEmployeeSelection(employee.id, event.target.checked)}
                     />
                   </td>
-                  <td>{employee.full_name}</td>
-                  <td>{employee.whatsapp_e164}</td>
-                  <td>{employee.designation || "-"}</td>
-                  <td>{employee.department || "-"}</td>
-                  <td>{employee.tracking_enabled ? "Yes" : "No"}</td>
-                  <td>{employee.tags.length ? employee.tags.map((tag) => tag.label).join(", ") : "-"}</td>
-                  <td>{employee.is_active ? employee.status : "Inactive"}</td>
+                  <td data-label="Name">{employee.full_name}</td>
+                  <td data-label="WhatsApp">{employee.whatsapp_e164}</td>
+                  <td data-label="Designation">{employee.designation || "-"}</td>
+                  <td data-label="Department">{employee.department || "-"}</td>
+                  <td data-label="Tracking">{employee.tracking_enabled ? "Yes" : "No"}</td>
+                  <td data-label="Tags">{employee.tags.length ? employee.tags.map((tag) => tag.label).join(", ") : "-"}</td>
+                  <td data-label="Status">{employee.is_active ? employee.status : "Inactive"}</td>
                   <td>
                     <div className="inline">
                       <button className="ghost" type="button" onClick={() => beginEdit(employee)}>
