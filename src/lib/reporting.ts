@@ -1,7 +1,8 @@
 import { addDays, endOfMonth, format, parseISO, startOfMonth, startOfWeek } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
 import { env } from "@/lib/config";
-import { summarizeReport } from "@/lib/ai";
+import { extractFieldReport, summarizeReport, type FieldReportExtract } from "@/lib/ai";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { logError } from "@/lib/logger";
 import { WORKING_DAYS } from "@/lib/constants";
 import { dhakaDayName } from "@/lib/time";
@@ -117,6 +118,21 @@ type EmployeeDailyMetrics = {
     snippet: string | null;
     semantic: SlotSemanticInsight | null;
   }>;
+  fieldReport?: FieldMetrics;
+};
+
+// CEO-facing performance summary derived from the rep's actual replies.
+type FieldMetrics = {
+  consistencyPct: number;
+  fieldPresencePct: number;
+  customersReached: number;
+  customerTargetPct: number;
+  visitTarget: number;
+  pipeline: number;
+  fieldPerformanceScore: number;
+  blockers: string | null;
+  highlight: string | null;
+  summary: string;
 };
 
 type EmployeePeriodMetrics = {
@@ -153,6 +169,38 @@ function groupBy<T>(items: T[], key: (item: T) => string): Record<string, T[]> {
 function toPct(numerator: number, denominator: number): number {
   if (denominator <= 0) return 0;
   return Number(((numerator / denominator) * 100).toFixed(2));
+}
+
+// Blends the CEO-facing dimensions into one fair, comparable performance score.
+// Customer activity is benchmarked against the daily gold-standard visit target.
+function buildFieldMetrics(
+  repliedSlots: number,
+  expectedSlots: number,
+  extract: FieldReportExtract,
+  visitTarget: number,
+): FieldMetrics {
+  const consistencyPct = toPct(repliedSlots, expectedSlots);
+  const fieldPresencePct = extract.locationShared ? 100 : 0;
+  const customerTargetPct = visitTarget > 0
+    ? Math.min(100, Number(((extract.customersVisited / visitTarget) * 100).toFixed(1)))
+    : 0;
+  const pipelinePct = Math.min(100, extract.leads * 50); // 2+ new leads/POs = full marks
+  const fieldPerformanceScore = Number(
+    (consistencyPct * 0.3 + fieldPresencePct * 0.2 + customerTargetPct * 0.35 + pipelinePct * 0.15).toFixed(1),
+  );
+
+  return {
+    consistencyPct,
+    fieldPresencePct,
+    customersReached: extract.customersVisited,
+    customerTargetPct,
+    visitTarget,
+    pipeline: extract.leads,
+    fieldPerformanceScore,
+    blockers: extract.blockers,
+    highlight: extract.highlight,
+    summary: extract.summary,
+  };
 }
 
 function normalizeSlotKey(raw: unknown): ReportSlotKey | null {
@@ -927,6 +975,33 @@ function buildTeamDailyMetrics(
       performanceScorePct: item.summary.performanceScorePct,
     }));
 
+  const withField = employees.filter((item) => item.fieldReport) as Array<
+    EmployeeDailyMetrics & { fieldReport: FieldMetrics }
+  >;
+  const avgField = (select: (field: FieldMetrics) => number) =>
+    withField.length
+      ? Number((withField.reduce((sum, item) => sum + select(item.fieldReport), 0) / withField.length).toFixed(1))
+      : 0;
+  const fieldSummary = {
+    avgFieldPerformance: avgField((field) => field.fieldPerformanceScore),
+    avgConsistencyPct: avgField((field) => field.consistencyPct),
+    fieldPresenceRatePct: avgField((field) => field.fieldPresencePct),
+    totalCustomersReached: withField.reduce((sum, item) => sum + item.fieldReport.customersReached, 0),
+    totalPipeline: withField.reduce((sum, item) => sum + item.fieldReport.pipeline, 0),
+    visitTarget: withField[0]?.fieldReport.visitTarget ?? 0,
+  };
+  const leaderboard = [...withField]
+    .sort((a, b) => b.fieldReport.fieldPerformanceScore - a.fieldReport.fieldPerformanceScore)
+    .slice(0, 10)
+    .map((item) => ({
+      employeeId: item.employee.id,
+      employeeName: item.employee.name,
+      fieldPerformanceScore: item.fieldReport.fieldPerformanceScore,
+      customersReached: item.fieldReport.customersReached,
+      pipeline: item.fieldReport.pipeline,
+      consistencyPct: item.fieldReport.consistencyPct,
+    }));
+
   return {
     reportVersion: 4,
     period: {
@@ -957,6 +1032,8 @@ function buildTeamDailyMetrics(
     },
     slotSummary,
     atRiskMembers,
+    fieldSummary,
+    leaderboard,
   };
 }
 
@@ -1203,18 +1280,34 @@ export async function generateDailyReports(reportDate: string) {
   const failures: Array<{ employeeId?: string; employeeName?: string; reason: string }> = [];
   const individualMetricsList: EmployeeDailyMetrics[] = [];
 
-  for (const [employeeId, rows] of Object.entries(byEmployee)) {
+  const visitTarget = env.SALES_DAILY_VISIT_TARGET;
+
+  await mapWithConcurrency(Object.entries(byEmployee), 6, async ([employeeId, rows]) => {
     const employeeName = resolveEmployeeName(rows[0]);
     const metrics = buildDailyEmployeeMetrics(employeeId, employeeName, rows, reportDate, effectivePolicies);
+
+    // Turn the rep's actual replies into CEO-facing field metrics.
+    const replyText = rows
+      .filter((row) => !row.is_missing && String(row.merged_text ?? "").trim())
+      .map((row) => `${row.slot_key}: ${String(row.merged_text).trim()}`)
+      .join("\n");
+    const extract = await extractFieldReport({ employeeName, date: reportDate, replies: replyText });
+    metrics.fieldReport = buildFieldMetrics(
+      metrics.summary.repliedSlots,
+      metrics.slotBreakdown.length,
+      extract,
+      visitTarget,
+    );
+
     individualMetricsList.push(metrics);
 
     let narrative = fallbackIndividualNarrative(metrics, policyInstruction);
 
     try {
       narrative = await summarizeReport(
-        `Daily individual report for ${employeeName} (${reportDate})`,
+        `Daily field report for ${employeeName} (${reportDate})`,
         metrics,
-        `Write in English. Keep this concise and operational. Evaluate response quality, business signal strength, and next-day coaching focus. ${policyInstruction}`,
+        "Write 2-4 plain-English sentences for a CEO judging how this field-sales rep performed today. Cover: did they report consistently, were they present in the field (location shared), how many customers they reached versus the daily target, any new leads or POs, and one thing to improve tomorrow. Do NOT use jargon like 'mandatory', 'critical', 'semantic', or 'compliance'.",
       );
     } catch (error) {
       failures.push({
@@ -1235,7 +1328,7 @@ export async function generateDailyReports(reportDate: string) {
         kind: "individual_daily",
         reportDate,
         employeeId,
-        title: `Daily compliance report - ${employeeName}`,
+        title: `Daily field report - ${employeeName}`,
         metrics,
         narrative,
         modelName: env.OPENAI_MODEL,
@@ -1255,7 +1348,7 @@ export async function generateDailyReports(reportDate: string) {
         error: (error as Error).message,
       });
     }
-  }
+  });
 
   const teamMetrics = buildTeamDailyMetrics(reportDate, individualMetricsList, responses.length, effectivePolicies);
   let teamNarrative = fallbackTeamNarrative(reportDate, teamMetrics, policyInstruction);

@@ -424,6 +424,71 @@ export async function transcribeVoiceNote(file: File): Promise<string> {
   return (result.text ?? "").trim();
 }
 
+export type FieldReportExtract = {
+  customersVisited: number;
+  leads: number;
+  locationShared: boolean;
+  blockers: string | null;
+  highlight: string | null;
+  summary: string;
+};
+
+const EMPTY_FIELD_REPORT: FieldReportExtract = {
+  customersVisited: 0,
+  leads: 0,
+  locationShared: false,
+  blockers: null,
+  highlight: null,
+  summary: "",
+};
+
+// Turns a rep's day of WhatsApp replies into structured field-sales data so the
+// report can score real performance (visits, leads, location) rather than
+// keyword guesses. Resilient: returns an empty record on any failure.
+export async function extractFieldReport(input: {
+  employeeName: string;
+  date: string;
+  replies: string;
+}): Promise<FieldReportExtract> {
+  if (!openai || !input.replies.trim()) return { ...EMPTY_FIELD_REPORT };
+
+  try {
+    const output = await runOpenAI({
+      system:
+        "You extract structured field-sales performance data from a Bangladeshi sales rep's WhatsApp replies to daily check-ins. Return strict JSON only. Be conservative: count only what is clearly stated; when unknown use 0, false, or null.",
+      user: [
+        "Extract this exact shape:",
+        '{"customers_visited": number, "leads": number, "location_shared": boolean, "blockers": string|null, "highlight": string|null, "summary": string}',
+        "- customers_visited: how many customers they visited/followed up today (best concrete number; 0 if none/unclear).",
+        "- leads: count of new leads / POs / promising clients mentioned (0 if none).",
+        "- location_shared: true if they shared a location or live location.",
+        "- blockers: any problem/blocker/help request, else null.",
+        "- highlight: the best achievement they mentioned, else null.",
+        "- summary: one short plain-English sentence summarizing their day.",
+        "",
+        `Rep: ${input.employeeName}`,
+        `Date: ${input.date}`,
+        `Replies:\n${input.replies}`,
+      ].join("\n"),
+      json: true,
+      temperature: 0,
+      maxTokens: 500,
+    });
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    return {
+      customersVisited: Math.max(0, Math.floor(Number(parsed.customers_visited ?? 0)) || 0),
+      leads: Math.max(0, Math.floor(Number(parsed.leads ?? 0)) || 0),
+      locationShared: Boolean(parsed.location_shared),
+      blockers: typeof parsed.blockers === "string" && parsed.blockers.trim() ? parsed.blockers.trim() : null,
+      highlight: typeof parsed.highlight === "string" && parsed.highlight.trim() ? parsed.highlight.trim() : null,
+      summary: typeof parsed.summary === "string" ? parsed.summary.trim() : "",
+    };
+  } catch (error) {
+    logError("Field report extraction failed", { reason: errorMessage(error), employee: input.employeeName });
+    return { ...EMPTY_FIELD_REPORT };
+  }
+}
+
 export async function summarizeReport(
   title: string,
   context: Record<string, unknown>,
