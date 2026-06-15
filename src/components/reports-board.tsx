@@ -70,6 +70,72 @@ function reportPerformanceScore(report: Report): number | null {
   return "averagePerformanceScorePct" in kpi ? asNumber(kpi.averagePerformanceScorePct) : null;
 }
 
+type FieldReport = {
+  consistencyPct: number;
+  fieldPresencePct: number;
+  customersReached: number;
+  visitTarget: number;
+  pipeline: number;
+  fieldPerformanceScore: number;
+  blockers: string | null;
+  highlight: string | null;
+};
+
+function getFieldReport(report: Report): FieldReport | null {
+  const fr = asRecord(report.metrics).fieldReport;
+  if (!fr || typeof fr !== "object") return null;
+  const f = fr as Record<string, unknown>;
+  return {
+    consistencyPct: asNumber(f.consistencyPct),
+    fieldPresencePct: asNumber(f.fieldPresencePct),
+    customersReached: asNumber(f.customersReached),
+    visitTarget: asNumber(f.visitTarget),
+    pipeline: asNumber(f.pipeline),
+    fieldPerformanceScore: asNumber(f.fieldPerformanceScore),
+    blockers: asString(f.blockers) || null,
+    highlight: asString(f.highlight) || null,
+  };
+}
+
+function getTeamFieldSummary(report: Report) {
+  const fs = asRecord(report.metrics).fieldSummary;
+  if (!fs || typeof fs !== "object" || !Object.keys(fs).length) return null;
+  const f = fs as Record<string, unknown>;
+  return {
+    avgFieldPerformance: asNumber(f.avgFieldPerformance),
+    avgConsistencyPct: asNumber(f.avgConsistencyPct),
+    fieldPresenceRatePct: asNumber(f.fieldPresenceRatePct),
+    totalCustomersReached: asNumber(f.totalCustomersReached),
+    totalPipeline: asNumber(f.totalPipeline),
+  };
+}
+
+function getLeaderboard(report: Report): Array<{ name: string; score: number; customers: number; pipeline: number }> {
+  return asArray(asRecord(report.metrics).leaderboard).map((row) => ({
+    name: asString(row.employeeName) || asString(row.employeeId) || "Unknown",
+    score: asNumber(row.fieldPerformanceScore),
+    customers: asNumber(row.customersReached),
+    pipeline: asNumber(row.pipeline),
+  }));
+}
+
+function Avatar({ name }: { name: string }) {
+  const initials =
+    name
+      .trim()
+      .split(/\s+/)
+      .map((word) => word[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "?";
+  const hue = [...name].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 360;
+  return (
+    <span className="avatar" style={{ background: `hsl(${hue} 45% 92%)`, color: `hsl(${hue} 55% 30%)` }} aria-hidden="true">
+      {initials}
+    </span>
+  );
+}
+
 function formatDate(date: string): string {
   const parsed = new Date(date);
   if (Number.isNaN(parsed.getTime())) return date;
@@ -625,11 +691,18 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
         const slotRows = extractSlotRows(report);
         const riskRows = extractRiskRows(report);
         const summaryRows = summaryRowsForReport(report);
+        const field = report.kind === "individual_daily" ? getFieldReport(report) : null;
+        const teamField = report.kind !== "individual_daily" ? getTeamFieldSummary(report) : null;
+        const leaderboard = teamField ? getLeaderboard(report) : [];
+        const hasFieldData = Boolean(field || teamField);
 
         return (
-          <article className="card" key={report.id}>
+          <article className="card report-card" key={report.id}>
             <div className="inline" style={{ justifyContent: "space-between" }}>
-              <h2>{report.title}</h2>
+              <div className="inline" style={{ gap: 10 }}>
+                {employee ? <Avatar name={employee} /> : null}
+                <h2>{report.title}</h2>
+              </div>
               <div className="inline">
                 <span className="pill">{KIND_LABEL[report.kind]}</span>
                 <button
@@ -642,16 +715,59 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
                 </button>
               </div>
             </div>
-            <p>
-              Date: {formatDate(report.report_date)} | Generated: {new Date(report.created_at).toLocaleString()} | Model: {report.model_name}
-              {employee ? ` | Employee: ${employee}` : ""}
+            <p className="muted" style={{ marginTop: 4 }}>
+              {formatDate(report.report_date)}{employee ? ` · ${employee}` : ""}
             </p>
 
-            <div className="inline">
-              {summaryRows.map((row) => (
-                <span className="pill" key={`${report.id}-${row.label}`}>{row.label}: {row.value}</span>
-              ))}
-            </div>
+            {field ? (
+              <div className="report-field">
+                <div className="report-score">
+                  <span className="report-score-value">{field.fieldPerformanceScore}%</span>
+                  <span className="muted">Field Performance</span>
+                </div>
+                <div className="report-stats">
+                  <div className="report-stat"><span>Consistency</span><strong>{field.consistencyPct}%</strong></div>
+                  <div className="report-stat"><span>Field Presence</span><strong>{field.fieldPresencePct}%</strong></div>
+                  <div className="report-stat"><span>Customers</span><strong>{field.customersReached}/{field.visitTarget}</strong></div>
+                  <div className="report-stat"><span>New Pipeline</span><strong>{field.pipeline}</strong></div>
+                </div>
+                {field.highlight ? <p className="muted" style={{ margin: 0 }}>🌟 {field.highlight}</p> : null}
+                {field.blockers ? <p className="muted" style={{ margin: 0 }}>⚠️ {field.blockers}</p> : null}
+              </div>
+            ) : null}
+
+            {teamField ? (
+              <div className="report-field">
+                <div className="report-stats">
+                  <div className="report-stat"><span>Avg Performance</span><strong>{teamField.avgFieldPerformance}%</strong></div>
+                  <div className="report-stat"><span>Consistency</span><strong>{teamField.avgConsistencyPct}%</strong></div>
+                  <div className="report-stat"><span>Field Presence</span><strong>{teamField.fieldPresenceRatePct}%</strong></div>
+                  <div className="report-stat"><span>Customers Reached</span><strong>{teamField.totalCustomersReached}</strong></div>
+                  <div className="report-stat"><span>New Pipeline</span><strong>{teamField.totalPipeline}</strong></div>
+                </div>
+                {leaderboard.length ? (
+                  <div className="leaderboard">
+                    {leaderboard.map((row, index) => (
+                      <div className="leaderboard-row" key={`${row.name}-${index}`}>
+                        <span className="leaderboard-rank">{index === 0 ? "★" : index + 1}</span>
+                        <Avatar name={row.name} />
+                        <span className="leaderboard-name">{row.name}</span>
+                        <span className="leaderboard-bar"><span style={{ width: `${Math.max(4, Math.min(100, row.score))}%` }} /></span>
+                        <span className="leaderboard-score">{row.score}%</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {!hasFieldData ? (
+              <div className="inline">
+                {summaryRows.map((row) => (
+                  <span className="pill" key={`${report.id}-${row.label}`}>{row.label}: {row.value}</span>
+                ))}
+              </div>
+            ) : null}
 
             <p>{report.narrative}</p>
 
