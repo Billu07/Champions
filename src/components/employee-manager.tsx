@@ -887,7 +887,7 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
           </label>
         </div>
 
-        <div className="table-wrap mobile-cards">
+        <div className="table-wrap directory-table-wrap">
           <table>
             <thead>
               <tr>
@@ -937,6 +937,41 @@ export function EmployeeManager({ initialEmployees, initialTags }: EmployeeManag
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="employee-mobile-list">
+          {filteredEmployees.length ? filteredEmployees.map((employee) => (
+            <details className="emp-card" key={employee.id}>
+              <summary className="emp-card-summary">
+                <span className="emp-card-check" onClick={(event) => event.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={selectedEmployeeIds.includes(employee.id)}
+                    onChange={(event) => toggleEmployeeSelection(employee.id, event.target.checked)}
+                  />
+                </span>
+                <span className="emp-card-main">
+                  <strong>{employee.full_name}</strong>
+                  <span className="muted">
+                    {(employee.designation || "No designation")} · {employee.whatsapp_e164}
+                  </span>
+                </span>
+                <span className="emp-card-chevron" aria-hidden="true">▾</span>
+              </summary>
+              <div className="emp-card-body">
+                <div className="emp-card-row"><span>Department</span><span>{employee.department || "-"}</span></div>
+                <div className="emp-card-row"><span>Tracking</span><span>{employee.tracking_enabled ? "Yes" : "No"}</span></div>
+                <div className="emp-card-row"><span>Tags</span><span>{employee.tags.length ? employee.tags.map((tag) => tag.label).join(", ") : "-"}</span></div>
+                <div className="emp-card-row"><span>Status</span><span>{employee.is_active ? employee.status : "Inactive"}</span></div>
+                <div className="inline" style={{ marginTop: 4 }}>
+                  <button className="ghost" type="button" onClick={() => beginEdit(employee)}>Edit</button>
+                  <button className="danger" type="button" onClick={() => void onDelete(employee)}>Delete</button>
+                </div>
+              </div>
+            </details>
+          )) : (
+            <p className="muted">No employees match current filters.</p>
+          )}
         </div>
       </article>
     </section>

@@ -1140,22 +1140,11 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
           </label>
 
           <article className="panel grid broadcast-audience" style={{ gap: 10 }}>
-            <div className="inline broadcast-audience-head" style={{ justifyContent: "space-between" }}>
+            <div className="broadcast-audience-head">
               <span className="muted" style={{ fontWeight: 700 }}>2. Choose Audience</span>
-              <div className="inline">
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={() => void onSendWithoutPreview()}
-                  disabled={busy || targetMode === "mixed"}
-                  title={targetMode === "mixed" ? "Mixed mode requires AI preview" : "Send directly without opening preview"}
-                >
-                  {sending ? "Sending..." : "Send Without AI Preview"}
-                </button>
-                <button type="submit" disabled={busy}>
-                  {previewing ? "Generating..." : "Generate AI Preview"}
-                </button>
-              </div>
+              <span className="muted" style={{ fontSize: 12 }}>
+                Pick who receives this, then use the buttons below to preview or send.
+              </span>
             </div>
 
             <div className="inline broadcast-target-modes">
@@ -1334,6 +1323,21 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
               </div>
             )}
           </article>
+
+          <div className="broadcast-actions">
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => void onSendWithoutPreview()}
+              disabled={busy || targetMode === "mixed"}
+              title={targetMode === "mixed" ? "Mixed mode requires AI preview" : "Send directly without opening preview"}
+            >
+              {sending ? "Sending..." : "Send Without AI Preview"}
+            </button>
+            <button type="submit" className="broadcast-cta" disabled={busy}>
+              {previewing ? "Generating..." : "Generate AI Preview"}
+            </button>
+          </div>
         </form>
 
         {lastCampaignId ? (

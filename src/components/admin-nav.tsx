@@ -178,7 +178,16 @@ export function AdminNav() {
           })}
         </nav>
 
-        <form method="post" action="/api/auth/logout" className="logout-form">
+        <form
+          method="post"
+          action="/api/auth/logout"
+          className="logout-form"
+          onSubmit={(event) => {
+            if (!window.confirm("Log out of Champions Family Ops?")) {
+              event.preventDefault();
+            }
+          }}
+        >
           <button className="ghost logout-btn" type="submit">
             <NavIcon name="logout" className="nav-link-icon" />
             <span>Logout</span>
