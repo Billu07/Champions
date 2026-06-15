@@ -350,8 +350,13 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
         return;
       }
       setMessage((prev) => (prev.trim() ? `${prev.trim()}\n${text}` : text));
-      setStatus("Voice note transcribed and added to the message.");
-      pushToast("success", "Voice transcribed", "Added the transcription to your message.");
+      pushToast("success", "Voice captured", "Drafting your message from the voice note...");
+      // Show the drafted (always-Bengali) result rather than the raw transcript,
+      // so transcription language quirks don't surface to the user.
+      void requestPreview({
+        messageOverride: text,
+        loadingStatus: "Drafting your message from the voice note...",
+      });
     } catch (error) {
       const msg = (error as Error).message || "Transcription failed";
       setStatus(msg);
