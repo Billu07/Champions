@@ -408,15 +408,14 @@ export async function transcribeVoiceNote(file: File): Promise<string> {
     throw new Error("OPENAI_API_KEY is not configured");
   }
 
-  const language = env.OPENAI_TRANSCRIBE_LANGUAGE;
-  const isBengali = language.toLowerCase().startsWith("bn");
+  const isBengali = env.OPENAI_TRANSCRIBE_LANGUAGE.toLowerCase().startsWith("bn");
 
   const result = await openai.audio.transcriptions.create({
     model: "whisper-1",
     file,
-    // Pin the language so Bengali isn't mis-detected as Hindi/Arabic.
-    ...(language ? { language } : {}),
-    // A same-language prompt further anchors the transcription.
+    // We do NOT pass `language`: the API rejects some ISO codes (e.g. "bn").
+    // Instead we bias toward Bengali with a same-language prompt, and the draft
+    // step (always Bengali) cleans up any residual mis-detection.
     ...(isBengali
       ? { prompt: "এটি Champions Family টিমের জন্য একটি বাংলা ভয়েস নোট। সহজ, স্বাভাবিক বাংলায় লেখো।" }
       : {}),
