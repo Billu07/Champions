@@ -29,6 +29,9 @@ const envSchema = z.object({
   CRON_JOB_SECRET: z.string().min(1),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default("gpt-4.1"),
+  // Forces Whisper's language so Bengali voice notes aren't mis-detected as
+  // Hindi/Arabic. Override (e.g. "en") only if voice notes aren't Bengali.
+  OPENAI_TRANSCRIBE_LANGUAGE: z.string().default("bn"),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default("gemini-flash-latest"),
   NEXT_PUBLIC_APP_TIMEZONE: z.string().default("Asia/Dhaka"),
@@ -59,6 +62,7 @@ export const env = envSchema.parse({
   CRON_JOB_SECRET: process.env.CRON_JOB_SECRET,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL,
+  OPENAI_TRANSCRIBE_LANGUAGE: process.env.OPENAI_TRANSCRIBE_LANGUAGE,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   GEMINI_MODEL: process.env.GEMINI_MODEL,
   NEXT_PUBLIC_APP_TIMEZONE: process.env.NEXT_PUBLIC_APP_TIMEZONE,
