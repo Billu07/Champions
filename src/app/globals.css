@@ -1,24 +1,27 @@
 :root {
-  --bg: #f6f9f5;
-  --bg-soft: #fbfdf9;
+  --bg: #f3f6f4;
+  --bg-soft: #fafcfb;
   --panel: #ffffff;
-  --panel-soft: #f6fbf5;
-  --text: #1f2121;
-  --muted: #596267;
-  --primary: #108040;
-  --primary-strong: #0e6e38;
-  --primary-soft: #e9f6ee;
-  --secondary: #90c040;
-  --secondary-soft: #f4fae8;
+  --panel-soft: #f7faf7;
+  --text: #14201a;
+  --muted: #687772;
+  --primary: #0f7a3d;
+  --primary-strong: #0b6131;
+  --primary-soft: #e8f4ec;
+  --secondary: #84bd3f;
+  --secondary-soft: #f2f9e6;
   --success: #15803d;
   --success-soft: #ecfdf3;
-  --danger: #c12f2b;
-  --danger-soft: #fff1f1;
-  --border: #d8e0d8;
-  --border-strong: #c8d3ca;
-  --ring: rgba(16, 128, 64, 0.22);
-  --shadow-sm: 0 2px 8px rgba(23, 53, 26, 0.05);
-  --shadow-md: 0 12px 26px rgba(23, 53, 26, 0.1);
+  --danger: #c8372f;
+  --danger-soft: #fdf2f1;
+  --border: #e4eae5;
+  --border-strong: #d3dcd4;
+  --ring: rgba(15, 122, 61, 0.17);
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --shadow-sm: 0 1px 2px rgba(18, 44, 27, 0.04), 0 4px 14px rgba(18, 44, 27, 0.05);
+  --shadow-md: 0 6px 18px rgba(18, 44, 27, 0.08), 0 20px 44px rgba(18, 44, 27, 0.09);
 }
 
 * {
@@ -35,10 +38,14 @@ body {
   font-family: var(--font-roboto), "Roboto", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   color: var(--text);
   background:
-    radial-gradient(900px 460px at 90% -10%, #e8f5d8 0%, transparent 58%),
-    radial-gradient(660px 360px at -5% 0%, #dcf4e4 0%, transparent 64%),
-    linear-gradient(180deg, #fefffc 0%, var(--bg) 38%, #f4f8f2 100%);
-  line-height: 1.45;
+    radial-gradient(1100px 520px at 88% -12%, rgba(132, 189, 63, 0.10) 0%, transparent 60%),
+    radial-gradient(820px 440px at -6% 2%, rgba(15, 122, 61, 0.08) 0%, transparent 64%),
+    linear-gradient(180deg, #ffffff 0%, var(--bg) 46%, #eef4ef 100%);
+  background-attachment: fixed;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 a {
@@ -63,8 +70,10 @@ a {
   margin-bottom: 30px;
   padding: 10px clamp(20px, 4vw, 54px);
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: saturate(150%) blur(14px);
+  -webkit-backdrop-filter: saturate(150%) blur(14px);
+  box-shadow: 0 1px 0 rgba(18, 44, 27, 0.04);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -154,7 +163,7 @@ a {
 }
 
 .nav-link:hover {
-  background: #f3f9f0;
+  background: var(--primary-soft);
   color: var(--primary-strong);
 }
 
@@ -206,22 +215,22 @@ a {
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
+  gap: 16px;
 }
 
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 14px;
+  border-radius: var(--radius-lg);
+  padding: 18px;
   box-shadow: var(--shadow-sm);
 }
 
 .panel {
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   background: var(--panel-soft);
-  padding: 12px;
+  padding: 14px;
 }
 
 .page > h1 {
@@ -550,10 +559,11 @@ p {
 
 .table-wrap {
   overflow-x: auto;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: #fff;
   max-width: 100%;
+  -webkit-overflow-scrolling: touch;
 }
 
 table {
@@ -564,21 +574,28 @@ table {
 
 th,
 td {
-  padding: 10px 10px;
-  border-bottom: 1px solid #e3e9f1;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
   text-align: left;
   font-size: 13px;
   vertical-align: top;
 }
 
+tbody tr:nth-child(even) td {
+  background: #fbfdfb;
+}
+
 tbody tr:hover td {
-  background: #f7fbf4;
+  background: var(--primary-soft);
 }
 
 th {
-  background: #f4f8f2;
-  color: #254532;
+  background: #eef4ef;
+  color: #234734;
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 11.5px;
 }
 
 .table-wrap thead th {
@@ -599,17 +616,23 @@ textarea,
 select {
   width: 100%;
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: #ffffff;
-  padding: 9px 11px;
-  transition: box-shadow 120ms ease, border-color 120ms ease, background-color 120ms ease;
+  padding: 11px 13px;
+  color: var(--text);
+  transition: box-shadow 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.input::placeholder,
+textarea::placeholder {
+  color: #9aa6a0;
 }
 
 .input:focus,
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: #7fbb8e;
+  border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--ring);
 }
 
@@ -621,20 +644,29 @@ textarea {
 button,
 .button {
   border: 1px solid transparent;
-  border-radius: 12px;
-  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
   background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
   color: #fff;
   font-weight: 600;
   font-size: 14px;
+  letter-spacing: 0.01em;
   cursor: pointer;
-  transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  box-shadow: 0 1px 2px rgba(11, 97, 49, 0.18);
+  transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
 }
 
 button:hover,
 .button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 8px 18px rgba(16, 128, 64, 0.22);
+  box-shadow: 0 10px 22px rgba(15, 122, 61, 0.24);
+  filter: brightness(1.03);
+}
+
+button:active,
+.button:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(11, 97, 49, 0.18);
 }
 
 button.secondary,
@@ -710,13 +742,15 @@ input[type="checkbox"] {
 .pill {
   display: inline-flex;
   align-items: center;
-  border: 1px solid #c2ddba;
-  background: #f1f9e9;
-  color: #1f6a35;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--primary-soft);
+  color: var(--primary-strong);
   border-radius: 999px;
-  padding: 5px 11px;
+  padding: 5px 12px;
   font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .muted {
@@ -1320,5 +1354,57 @@ details summary {
 
   .page > h1 + p {
     font-size: 16px;
+  }
+}
+
+/* Mobile-specific UX polish: comfortable tap targets and inputs that don't
+   trigger iOS auto-zoom (font-size >= 16px), full-width toasts. Visual only. */
+@media (max-width: 640px) {
+  .card {
+    padding: 15px;
+    border-radius: var(--radius-md);
+  }
+
+  .panel {
+    padding: 12px;
+  }
+
+  button,
+  .button {
+    min-height: 44px;
+    padding: 11px 16px;
+  }
+
+  .input,
+  textarea,
+  select {
+    font-size: 16px;
+    padding: 12px 13px;
+  }
+
+  .inline {
+    gap: 10px;
+  }
+
+  .toast-stack {
+    top: 12px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+  }
+
+  .broadcast-modal {
+    padding: 16px;
+    border-radius: var(--radius-md);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
   }
 }
