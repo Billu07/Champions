@@ -349,10 +349,9 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
         pushToast("info", "No speech detected", "The voice note had no recognizable speech.");
         return;
       }
-      setMessage((prev) => (prev.trim() ? `${prev.trim()}\n${text}` : text));
       pushToast("success", "Voice captured", "Drafting your message from the voice note...");
-      // Show the drafted (always-Bengali) result rather than the raw transcript,
-      // so transcription language quirks don't surface to the user.
+      // The transcript is consumed directly by the AI — we never surface it in the
+      // composer; the user only sees the drafted result in the preview.
       void requestPreview({
         messageOverride: text,
         loadingStatus: "Drafting your message from the voice note...",
