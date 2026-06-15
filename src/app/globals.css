@@ -189,6 +189,28 @@ a {
   flex: 0 0 auto;
 }
 
+/* Mobile menu button — hidden on desktop, shown as a hamburger on small screens. */
+.nav-burger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  color: var(--primary-strong);
+  border: 1px solid var(--border-strong);
+  box-shadow: none;
+}
+
+.nav-burger:hover {
+  background: var(--primary-soft);
+  transform: none;
+  box-shadow: none;
+  filter: none;
+}
+
 .logout-form {
   display: flex;
 }
@@ -1222,9 +1244,12 @@ details summary {
     margin-top: -18px;
     margin-bottom: 20px;
     padding-block: 8px;
+    flex-wrap: nowrap;
+    align-items: center;
   }
 
   .topbar-right {
+    width: auto;
     gap: 10px;
   }
 
@@ -1240,20 +1265,44 @@ details summary {
     display: none;
   }
 
-  .nav {
-    width: 100%;
-    order: 2;
-    justify-content: flex-start;
-    gap: 6px;
-    padding-bottom: 0;
+  .nav-burger {
+    display: inline-flex;
   }
 
-  .logout-form {
-    order: 1;
+  /* Nav becomes a full-width dropdown panel under the topbar. */
+  .nav {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    width: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    background: #ffffff;
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+    padding: 10px clamp(16px, 4vw, 54px) 14px;
+    display: none;
+  }
+
+  .nav.open {
+    display: flex;
+  }
+
+  .nav-link {
+    width: 100%;
+    padding: 13px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 15px;
+  }
+
+  .nav-link.active {
+    background: var(--primary-soft);
   }
 
   .nav-link.active::after {
-    bottom: -6px;
+    display: none;
   }
 
   .col-6,
