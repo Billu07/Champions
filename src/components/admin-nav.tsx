@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import type { Route } from "next";
@@ -15,7 +15,9 @@ type IconName =
   | "conversations"
   | "reports"
   | "calendar"
-  | "logout";
+  | "logout"
+  | "menu"
+  | "close";
 
 type NavLink = {
   href: Route;
@@ -108,6 +110,21 @@ function NavIcon({ name, className }: { name: IconName; className?: string }) {
           <path d="M18 12H9" />
         </>
       ) : null}
+
+      {name === "menu" ? (
+        <>
+          <path d="M4 6h16" />
+          <path d="M4 12h16" />
+          <path d="M4 18h16" />
+        </>
+      ) : null}
+
+      {name === "close" ? (
+        <>
+          <path d="M6 6l12 12" />
+          <path d="M18 6 6 18" />
+        </>
+      ) : null}
     </svg>
   );
 }
@@ -115,12 +132,18 @@ function NavIcon({ name, className }: { name: IconName; className?: string }) {
 export function AdminNav() {
   const pathname = usePathname();
   const router = useRouter();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     for (const link of links) {
       router.prefetch(link.href);
     }
   }, [router]);
+
+  // Close the mobile menu whenever the route changes.
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
 
   return (
     <header className="topbar">
@@ -138,7 +161,7 @@ export function AdminNav() {
       </div>
 
       <div className="topbar-right">
-        <nav className="nav" aria-label="Primary">
+        <nav className={menuOpen ? "nav open" : "nav"} aria-label="Primary">
           {links.map((link) => {
             const active = isActivePath(pathname, link.href);
             return (
@@ -161,6 +184,16 @@ export function AdminNav() {
             <span>Logout</span>
           </button>
         </form>
+
+        <button
+          type="button"
+          className="nav-burger"
+          aria-label={menuOpen ? "Close menu" : "Open menu"}
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((value) => !value)}
+        >
+          <NavIcon name={menuOpen ? "close" : "menu"} className="nav-link-icon" />
+        </button>
       </div>
     </header>
   );
