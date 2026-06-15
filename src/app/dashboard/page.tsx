@@ -75,7 +75,7 @@ export default async function DashboardPage() {
             <span className="muted">Last {campaigns.length}</span>
           </div>
 
-          <div className="table-wrap">
+          <div className="table-wrap mobile-cards">
             <table>
               <thead>
                 <tr>
@@ -92,14 +92,14 @@ export default async function DashboardPage() {
               <tbody>
                 {campaigns.length ? campaigns.map((item) => (
                   <tr key={item.id as string}>
-                    <td>{new Date(String(item.created_at)).toLocaleString()}</td>
-                    <td>{String(item.audience_type)}</td>
-                    <td>{String(item.recipient_count)}</td>
-                    <td>{String((item as { delivery_summary: { accepted: number } }).delivery_summary.accepted)}</td>
-                    <td>{String((item as { delivery_summary: { sent: number } }).delivery_summary.sent)}</td>
-                    <td>{String((item as { delivery_summary: { delivered: number } }).delivery_summary.delivered)}</td>
-                    <td>{String((item as { delivery_summary: { read: number } }).delivery_summary.read)}</td>
-                    <td>{String((item as { delivery_summary: { failed: number } }).delivery_summary.failed)}</td>
+                    <td data-label="Time">{new Date(String(item.created_at)).toLocaleString()}</td>
+                    <td data-label="Audience">{String(item.audience_type)}</td>
+                    <td data-label="Recipients">{String(item.recipient_count)}</td>
+                    <td data-label="Accepted">{String((item as { delivery_summary: { accepted: number } }).delivery_summary.accepted)}</td>
+                    <td data-label="Sent">{String((item as { delivery_summary: { sent: number } }).delivery_summary.sent)}</td>
+                    <td data-label="Delivered">{String((item as { delivery_summary: { delivered: number } }).delivery_summary.delivered)}</td>
+                    <td data-label="Read">{String((item as { delivery_summary: { read: number } }).delivery_summary.read)}</td>
+                    <td data-label="Failed">{String((item as { delivery_summary: { failed: number } }).delivery_summary.failed)}</td>
                   </tr>
                 )) : (
                   <tr>

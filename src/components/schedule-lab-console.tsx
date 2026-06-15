@@ -348,7 +348,7 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
           <span className="muted">{schedules.length} total</span>
         </div>
 
-        <div className="table-wrap">
+        <div className="table-wrap mobile-cards">
           <table>
             <thead>
               <tr>
@@ -366,7 +366,7 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
                 const isEditing = editingId === item.id;
                 return (
                   <tr key={item.id}>
-                    <td>
+                    <td data-label="Label">
                       {isEditing ? (
                         <input
                           className="input"
@@ -375,7 +375,7 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
                         />
                       ) : item.label}
                     </td>
-                    <td>
+                    <td data-label="Time (Dhaka)">
                       {isEditing ? (
                         <input
                           className="input"
@@ -385,8 +385,8 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
                         />
                       ) : `${item.timeHHmm} (${timeLabel(item.timeHHmm)})`}
                     </td>
-                    <td>{isEditing ? (editForm.isActive ? "Yes" : "No") : (item.isActive ? "Yes" : "No")}</td>
-                    <td>
+                    <td data-label="Active">{isEditing ? (editForm.isActive ? "Yes" : "No") : (item.isActive ? "Yes" : "No")}</td>
+                    <td data-label="Report Slot">
                       {isEditing ? (
                         <input
                           className="input"
@@ -397,7 +397,7 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
                         />
                       ) : (item.reportSlotKey ?? "-")}
                     </td>
-                    <td>
+                    <td data-label="Report Policy">
                       {isEditing ? (
                         <div className="grid" style={{ gap: 6 }}>
                           <label className="inline">
@@ -435,7 +435,7 @@ export function ScheduleLabConsole({ initialSchedules, initialError }: ScheduleL
                           : "-"
                       )}
                     </td>
-                    <td>
+                    <td data-label="Body">
                       {isEditing ? (
                         <textarea
                           value={editForm.bodyText}

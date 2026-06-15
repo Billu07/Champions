@@ -657,7 +657,7 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
 
             <details>
               <summary>Slot Compliance Details</summary>
-              <div className="table-wrap" style={{ marginTop: 8 }}>
+              <div className="table-wrap mobile-cards" style={{ marginTop: 8 }}>
                 <table>
                   <thead>
                     <tr>
@@ -672,12 +672,12 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
                   <tbody>
                     {slotRows.length ? slotRows.map((slot) => (
                       <tr key={`${report.id}-${slot.label}`}>
-                        <td>{slot.label}{slot.critical ? " (critical)" : ""}</td>
-                        <td>{slot.expected}</td>
-                        <td>{slot.replied}</td>
-                        <td>{slot.missing}</td>
-                        <td>{pct(slot.compliancePct)}</td>
-                        <td>{slot.semanticScorePct === null ? "-" : pct(slot.semanticScorePct)}</td>
+                        <td data-label="Slot">{slot.label}{slot.critical ? " (critical)" : ""}</td>
+                        <td data-label="Expected">{slot.expected}</td>
+                        <td data-label="Replied">{slot.replied}</td>
+                        <td data-label="Missing">{slot.missing}</td>
+                        <td data-label="Compliance">{pct(slot.compliancePct)}</td>
+                        <td data-label="Semantic">{slot.semanticScorePct === null ? "-" : pct(slot.semanticScorePct)}</td>
                       </tr>
                     )) : (
                       <tr>
@@ -692,7 +692,7 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
             {riskRows.length ? (
               <details>
                 <summary>At-Risk Members</summary>
-                <div className="table-wrap" style={{ marginTop: 8 }}>
+                <div className="table-wrap mobile-cards" style={{ marginTop: 8 }}>
                   <table>
                     <thead>
                       <tr>
@@ -703,8 +703,8 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
                     <tbody>
                       {riskRows.map((row) => (
                         <tr key={`${report.id}-${row.name}`}>
-                          <td>{row.name}</td>
-                          <td>{row.score}</td>
+                          <td data-label="Member">{row.name}</td>
+                          <td data-label="Score">{row.score}</td>
                         </tr>
                       ))}
                     </tbody>

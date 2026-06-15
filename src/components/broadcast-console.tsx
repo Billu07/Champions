@@ -1563,7 +1563,7 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
               <p className="muted">AI diagnostics: {aiWarnings.join(" | ")}</p>
             ) : null}
 
-            <div className="inline" style={{ justifyContent: "space-between" }}>
+            <div className="inline broadcast-modal-actions" style={{ justifyContent: "space-between" }}>
               <span className="muted">Confirm and send this message.</span>
               <button type="button" onClick={() => void onSend()} disabled={busy}>
                 {sending ? "Sending..." : "Confirm & Send"}

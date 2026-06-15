@@ -1448,6 +1448,102 @@ details summary {
   }
 }
 
+/* Sticky action footer inside the broadcast preview modal so Send stays reachable. */
+.broadcast-modal-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin-top: 4px;
+  padding: 12px 0 2px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* Mobile: bottom-sheet modal + card-style tables (opt-in via .mobile-cards). */
+@media (max-width: 640px) {
+  .broadcast-modal-backdrop {
+    place-items: end center;
+    padding: 0;
+  }
+
+  .broadcast-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 90vh;
+    padding: 16px;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    animation: sheet-up 0.25s ease-out;
+  }
+
+  .mobile-cards table {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .mobile-cards thead {
+    display: none;
+  }
+
+  .mobile-cards tbody,
+  .mobile-cards tr,
+  .mobile-cards td {
+    display: block;
+    width: 100%;
+  }
+
+  .mobile-cards tr {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: #fff;
+    padding: 4px 12px;
+    margin: 10px;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .mobile-cards td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 14px;
+    text-align: right;
+    border-bottom: 1px solid var(--border);
+    padding: 9px 0;
+  }
+
+  .mobile-cards td:last-child {
+    border-bottom: none;
+  }
+
+  .mobile-cards td::before {
+    content: attr(data-label);
+    flex: 0 0 40%;
+    text-align: left;
+    font-weight: 700;
+    color: #234734;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+  }
+
+  .mobile-cards td:not([data-label])::before {
+    content: none;
+  }
+
+  .mobile-cards tbody tr:hover td,
+  .mobile-cards tbody tr:nth-child(even) td {
+    background: transparent;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
