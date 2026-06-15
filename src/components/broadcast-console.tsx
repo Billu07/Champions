@@ -90,7 +90,7 @@ type DeliveryInfo = {
 const targetModeOptions: Array<{ value: TargetMode; label: string }> = [
   { value: "mixed", label: "Mixed (AI)" },
   { value: "group", label: "Group" },
-  { value: "custom", label: "Custom Members" },
+  { value: "custom", label: "Custom" },
 ];
 
 const groupAudienceOptions: Array<{ value: GroupAudience; label: string }> = [

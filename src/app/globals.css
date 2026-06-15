@@ -1101,12 +1101,27 @@ details summary {
   color: #1b6034;
 }
 
+/* Broadcast "studio": a clean compose surface with a branded feel. */
 .broadcast-station {
   border-color: #cadbc8;
+  background: linear-gradient(180deg, #fbfdfa 0%, #ffffff 20%);
+}
+
+.broadcast-draft > span:first-child,
+.broadcast-audience-head > span:first-child {
+  color: var(--primary-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 12px;
 }
 
 .broadcast-form textarea {
-  min-height: 190px;
+  min-height: 200px;
+  background: #fcfdfb;
+  border-radius: var(--radius-md);
+  font-size: 15px;
+  line-height: 1.6;
+  padding: 14px;
 }
 
 .broadcast-audience {
@@ -1127,13 +1142,43 @@ details summary {
   flex-wrap: wrap;
 }
 
+/* Audience modes as a sleek segmented control instead of stacked buttons. */
 .broadcast-target-modes {
-  gap: 10px;
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  background: #eaf1ea;
+  border: 1px solid var(--border);
+  border-radius: 999px;
 }
 
 .broadcast-target-modes > button {
-  min-width: 160px;
+  flex: 1 1 0;
+  min-width: 0;
   justify-content: center;
+  border-radius: 999px;
+  padding: 9px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  box-shadow: none;
+}
+
+.broadcast-target-modes > button:hover {
+  background: rgba(15, 122, 61, 0.08);
+  transform: none;
+  box-shadow: none;
+  filter: none;
+}
+
+/* Active mode (the non-ghost button) reads as a raised pill. */
+.broadcast-target-modes > button:not(.ghost) {
+  background: #ffffff;
+  color: var(--primary-strong);
+  font-weight: 700;
+  box-shadow: var(--shadow-sm);
 }
 
 .broadcast-custom-members .table-wrap {
