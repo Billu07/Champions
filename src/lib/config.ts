@@ -29,6 +29,9 @@ const envSchema = z.object({
   CRON_JOB_SECRET: z.string().min(1),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default("gpt-4.1"),
+  // Gold-standard daily customer visits (a rep hitting this scores 100% on the
+  // customer-activity dimension). Tune to the team's expectation.
+  SALES_DAILY_VISIT_TARGET: z.coerce.number().min(1).default(5),
   // Forces Whisper's language so Bengali voice notes aren't mis-detected as
   // Hindi/Arabic. Override (e.g. "en") only if voice notes aren't Bengali.
   OPENAI_TRANSCRIBE_LANGUAGE: z.string().default("bn"),
@@ -63,6 +66,7 @@ export const env = envSchema.parse({
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL,
   OPENAI_TRANSCRIBE_LANGUAGE: process.env.OPENAI_TRANSCRIBE_LANGUAGE,
+  SALES_DAILY_VISIT_TARGET: process.env.SALES_DAILY_VISIT_TARGET,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   GEMINI_MODEL: process.env.GEMINI_MODEL,
   NEXT_PUBLIC_APP_TIMEZONE: process.env.NEXT_PUBLIC_APP_TIMEZONE,
