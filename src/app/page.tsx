@@ -57,20 +57,23 @@ export default async function HomePage() {
           </span>
         </div>
 
-        <nav className="nav">
+        <div className="inline" style={{ gap: 10 }}>
           {loggedIn ? (
-            <>
+            <nav className="nav">
               <Link href="/dashboard" className="nav-link">Dashboard</Link>
               <Link href="/employees" className="nav-link">Employees</Link>
               <Link href="/broadcasts" className="nav-link">Broadcasts</Link>
               <Link href="/conversations" className="nav-link">Conversations</Link>
               <Link href="/reports" className="nav-link">Reports</Link>
               {env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER ? <Link href="/test-scheduler" className="nav-link">Test Scheduler</Link> : null}
-            </>
-          ) : (
-            <Link href="/login" className="nav-link active">Login</Link>
-          )}
-        </nav>
+            </nav>
+          ) : null}
+          {/* Always-visible CTA — the public landing page has no hamburger, so the
+              primary action must never live inside the collapsible .nav. */}
+          <Link href={loggedIn ? "/dashboard" : "/login"} className="button nav-cta">
+            {loggedIn ? "Open Dashboard" : "Login"}
+          </Link>
+        </div>
       </header>
 
       <h1>WhatsApp Operations Control Center</h1>

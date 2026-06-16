@@ -85,6 +85,16 @@ a {
   font-weight: 700;
 }
 
+/* Always-visible header CTA (used on the public landing page, which has no
+   hamburger menu). Stays visible at every breakpoint. */
+.nav-cta {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  text-decoration: none;
+}
+
 .brand-shell {
   display: flex;
   align-items: center;
