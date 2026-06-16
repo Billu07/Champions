@@ -110,13 +110,89 @@ function getTeamFieldSummary(report: Report) {
   };
 }
 
-function getLeaderboard(report: Report): Array<{ name: string; score: number; customers: number; pipeline: number }> {
+type LeaderboardRow = {
+  name: string;
+  score: number;
+  customers: number;
+  pipeline: number;
+  consistencyPct: number;
+  fieldPresencePct: number;
+};
+
+function getLeaderboard(report: Report): LeaderboardRow[] {
   return asArray(asRecord(report.metrics).leaderboard).map((row) => ({
     name: asString(row.employeeName) || asString(row.employeeId) || "Unknown",
     score: asNumber(row.fieldPerformanceScore),
     customers: asNumber(row.customersReached),
     pipeline: asNumber(row.pipeline),
+    consistencyPct: asNumber(row.consistencyPct),
+    fieldPresencePct: asNumber(row.fieldPresencePct),
   }));
+}
+
+type EmployeeOfPeriod = {
+  name: string;
+  periodLabel: string;
+  score: number;
+  customers: number;
+  visitTarget: number;
+  pipeline: number;
+  consistencyPct: number;
+  fieldPresencePct: number;
+  highlight: string | null;
+};
+
+function getEmployeeOfPeriod(report: Report): EmployeeOfPeriod | null {
+  const eop = asRecord(report.metrics).employeeOfPeriod;
+  if (!eop || typeof eop !== "object") return null;
+  const e = eop as Record<string, unknown>;
+  const name = asString(e.employeeName) || asString(e.employeeId);
+  if (!name) return null;
+  return {
+    name,
+    periodLabel: asString(e.periodLabel) || "Top Performer",
+    score: asNumber(e.fieldPerformanceScore),
+    customers: asNumber(e.customersReached),
+    visitTarget: asNumber(e.visitTarget),
+    pipeline: asNumber(e.pipeline),
+    consistencyPct: asNumber(e.consistencyPct),
+    fieldPresencePct: asNumber(e.fieldPresencePct),
+    highlight: asString(e.highlight) || null,
+  };
+}
+
+type BadgeStats = {
+  fieldPerformanceScore: number;
+  consistencyPct: number;
+  fieldPresencePct: number;
+  customersReached: number;
+  visitTarget: number;
+  pipeline: number;
+};
+
+// Recognition badges derived from a rep's stats — plain CEO language.
+function computeBadges(stats: BadgeStats): Array<{ label: string; icon: string }> {
+  const badges: Array<{ label: string; icon: string }> = [];
+  if (stats.fieldPerformanceScore >= 85) badges.push({ icon: "🏆", label: "Top Performer" });
+  if (stats.visitTarget > 0 && stats.customersReached >= stats.visitTarget) badges.push({ icon: "🎯", label: "Target Crusher" });
+  if (stats.consistencyPct >= 90) badges.push({ icon: "🔁", label: "Always Reporting" });
+  if (stats.fieldPresencePct >= 100) badges.push({ icon: "📍", label: "On the Field" });
+  if (stats.pipeline >= 2) badges.push({ icon: "💼", label: "Deal Maker" });
+  return badges;
+}
+
+function Badges({ stats }: { stats: BadgeStats }) {
+  const badges = computeBadges(stats);
+  if (!badges.length) return null;
+  return (
+    <div className="badge-row">
+      {badges.map((badge) => (
+        <span className="badge" key={badge.label}>
+          <span aria-hidden="true">{badge.icon}</span> {badge.label}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function Avatar({ name }: { name: string }) {
@@ -133,6 +209,93 @@ function Avatar({ name }: { name: string }) {
     <span className="avatar" style={{ background: `hsl(${hue} 45% 92%)`, color: `hsl(${hue} 55% 30%)` }} aria-hidden="true">
       {initials}
     </span>
+  );
+}
+
+type ProfilePoint = {
+  id: string;
+  date: string;
+  score: number;
+  customers: number;
+  pipeline: number;
+  consistency: number;
+  fieldPresence: number;
+  visitTarget: number;
+  highlight: string | null;
+  narrative: string;
+};
+
+type Profile = {
+  name: string;
+  points: ProfilePoint[];
+  avgScore: number;
+  avgConsistency: number;
+  avgFieldPresence: number;
+  totalCustomers: number;
+  totalPipeline: number;
+  days: number;
+  badgeStats: BadgeStats;
+};
+
+// Aggregates a rep's daily reports (already loaded client-side) into a profile —
+// no extra API call. Trend, averages, totals and recognition badges.
+function buildProfile(reports: Report[], name: string): Profile {
+  const points: ProfilePoint[] = reports
+    .filter((report) => report.kind === "individual_daily" && resolveEmployeeName(report) === name)
+    .map((report) => ({ report, field: getFieldReport(report) }))
+    .filter((item): item is { report: Report; field: FieldReport } => Boolean(item.field))
+    .map(({ report, field }) => ({
+      id: report.id,
+      date: report.report_date,
+      score: field.fieldPerformanceScore,
+      customers: field.customersReached,
+      pipeline: field.pipeline,
+      consistency: field.consistencyPct,
+      fieldPresence: field.fieldPresencePct,
+      visitTarget: field.visitTarget,
+      highlight: field.highlight,
+      narrative: report.narrative,
+    }))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  const n = points.length;
+  const sum = (select: (point: ProfilePoint) => number) => points.reduce((acc, point) => acc + select(point), 0);
+  const avg = (select: (point: ProfilePoint) => number) => (n ? Number((sum(select) / n).toFixed(1)) : 0);
+  const avgScore = avg((point) => point.score);
+  const avgConsistency = avg((point) => point.consistency);
+  const avgFieldPresence = avg((point) => point.fieldPresence);
+
+  return {
+    name,
+    points,
+    avgScore,
+    avgConsistency,
+    avgFieldPresence,
+    totalCustomers: sum((point) => point.customers),
+    totalPipeline: sum((point) => point.pipeline),
+    days: n,
+    badgeStats: {
+      fieldPerformanceScore: avgScore,
+      consistencyPct: avgConsistency,
+      fieldPresencePct: avgFieldPresence,
+      customersReached: n ? Math.round(sum((point) => point.customers) / n) : 0,
+      visitTarget: points[n - 1]?.visitTarget ?? 0,
+      pipeline: n ? Math.round(sum((point) => point.pipeline) / n) : 0,
+    },
+  };
+}
+
+function Sparkline({ points }: { points: ProfilePoint[] }) {
+  const recent = points.slice(-14);
+  if (!recent.length) return null;
+  return (
+    <div className="sparkline" role="img" aria-label="Field performance trend">
+      {recent.map((point, index) => (
+        <span className="sparkline-bar" key={`${point.date}-${index}`} title={`${point.date}: ${point.score}%`}>
+          <span style={{ height: `${Math.max(4, Math.min(100, point.score))}%` }} />
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -284,6 +447,7 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [exportingReportId, setExportingReportId] = useState<string | null>(null);
+  const [profileName, setProfileName] = useState<string | null>(null);
 
   const pageSize = 15;
 
@@ -520,6 +684,11 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
     };
   }, [filteredReports]);
 
+  const profile = useMemo(
+    () => (profileName ? buildProfile(reports, profileName) : null),
+    [reports, profileName],
+  );
+
   const totalPages = Math.max(1, Math.ceil(filteredReports.length / pageSize));
   const currentPage = Math.min(page, totalPages);
 
@@ -694,14 +863,21 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
         const field = report.kind === "individual_daily" ? getFieldReport(report) : null;
         const teamField = report.kind !== "individual_daily" ? getTeamFieldSummary(report) : null;
         const leaderboard = teamField ? getLeaderboard(report) : [];
+        const eop = report.kind === "team_weekly" || report.kind === "team_monthly" ? getEmployeeOfPeriod(report) : null;
         const hasFieldData = Boolean(field || teamField);
 
         return (
           <article className="card report-card" key={report.id}>
             <div className="inline" style={{ justifyContent: "space-between" }}>
               <div className="inline" style={{ gap: 10 }}>
-                {employee ? <Avatar name={employee} /> : null}
-                <h2>{report.title}</h2>
+                {employee ? (
+                  <button type="button" className="profile-trigger" onClick={() => setProfileName(employee)} title="View profile">
+                    <Avatar name={employee} />
+                    <h2>{report.title}</h2>
+                  </button>
+                ) : (
+                  <h2>{report.title}</h2>
+                )}
               </div>
               <div className="inline">
                 <span className="pill">{KIND_LABEL[report.kind]}</span>
@@ -731,9 +907,42 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
                   <div className="report-stat"><span>Customers</span><strong>{field.customersReached}/{field.visitTarget}</strong></div>
                   <div className="report-stat"><span>New Pipeline</span><strong>{field.pipeline}</strong></div>
                 </div>
+                <Badges
+                  stats={{
+                    fieldPerformanceScore: field.fieldPerformanceScore,
+                    consistencyPct: field.consistencyPct,
+                    fieldPresencePct: field.fieldPresencePct,
+                    customersReached: field.customersReached,
+                    visitTarget: field.visitTarget,
+                    pipeline: field.pipeline,
+                  }}
+                />
                 {field.highlight ? <p className="muted" style={{ margin: 0 }}>🌟 {field.highlight}</p> : null}
                 {field.blockers ? <p className="muted" style={{ margin: 0 }}>⚠️ {field.blockers}</p> : null}
               </div>
+            ) : null}
+
+            {eop ? (
+              <button type="button" className="employee-of-period" onClick={() => setProfileName(eop.name)} title="View profile">
+                <span className="eop-ribbon">{eop.periodLabel}</span>
+                <Avatar name={eop.name} />
+                <div className="eop-body">
+                  <strong className="eop-name">{eop.name}</strong>
+                  <span className="muted eop-meta">
+                    {eop.score}% field performance · {eop.customers}/{eop.visitTarget} customers · {eop.pipeline} new pipeline
+                  </span>
+                  <Badges
+                    stats={{
+                      fieldPerformanceScore: eop.score,
+                      consistencyPct: eop.consistencyPct,
+                      fieldPresencePct: eop.fieldPresencePct,
+                      customersReached: eop.customers,
+                      visitTarget: eop.visitTarget,
+                      pipeline: eop.pipeline,
+                    }}
+                  />
+                </div>
+              </button>
             ) : null}
 
             {teamField ? (
@@ -748,13 +957,19 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
                 {leaderboard.length ? (
                   <div className="leaderboard">
                     {leaderboard.map((row, index) => (
-                      <div className="leaderboard-row" key={`${row.name}-${index}`}>
+                      <button
+                        type="button"
+                        className="leaderboard-row"
+                        key={`${row.name}-${index}`}
+                        onClick={() => setProfileName(row.name)}
+                        title="View profile"
+                      >
                         <span className="leaderboard-rank">{index === 0 ? "★" : index + 1}</span>
                         <Avatar name={row.name} />
                         <span className="leaderboard-name">{row.name}</span>
                         <span className="leaderboard-bar"><span style={{ width: `${Math.max(4, Math.min(100, row.score))}%` }} /></span>
                         <span className="leaderboard-score">{row.score}%</span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 ) : null}
@@ -833,6 +1048,65 @@ export function ReportsBoard({ initialReports, brandName, brandTagline }: Report
       })}
 
       {!filteredReports.length ? <p className="muted">No reports found for current filters.</p> : null}
+
+      {profile ? (
+        <div className="profile-overlay" role="dialog" aria-modal="true" onClick={() => setProfileName(null)}>
+          <div className="profile-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="profile-head">
+              <div className="inline" style={{ gap: 12 }}>
+                <Avatar name={profile.name} />
+                <div className="grid" style={{ gap: 2 }}>
+                  <strong style={{ fontSize: 18 }}>{profile.name}</strong>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    {profile.days} {profile.days === 1 ? "day" : "days"} of field reports
+                  </span>
+                </div>
+              </div>
+              <button className="ghost" type="button" onClick={() => setProfileName(null)}>Close</button>
+            </div>
+
+            {profile.days ? (
+              <>
+                <Badges stats={profile.badgeStats} />
+                <div className="report-stats" style={{ marginTop: 4 }}>
+                  <div className="report-stat"><span>Avg Performance</span><strong>{profile.avgScore}%</strong></div>
+                  <div className="report-stat"><span>Avg Consistency</span><strong>{profile.avgConsistency}%</strong></div>
+                  <div className="report-stat"><span>Field Presence</span><strong>{profile.avgFieldPresence}%</strong></div>
+                  <div className="report-stat"><span>Customers Reached</span><strong>{profile.totalCustomers}</strong></div>
+                  <div className="report-stat"><span>New Pipeline</span><strong>{profile.totalPipeline}</strong></div>
+                </div>
+
+                <div className="grid" style={{ gap: 6 }}>
+                  <span className="muted" style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    Performance trend (last {Math.min(14, profile.points.length)} days)
+                  </span>
+                  <Sparkline points={profile.points} />
+                </div>
+
+                <div className="grid" style={{ gap: 8 }}>
+                  {[...profile.points].reverse().slice(0, 10).map((point) => (
+                    <div className="profile-day" key={point.id}>
+                      <div className="inline" style={{ justifyContent: "space-between" }}>
+                        <strong>{formatDate(point.date)}</strong>
+                        <span className="pill">{point.score}%</span>
+                      </div>
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        {point.customers}/{point.visitTarget} customers · {point.pipeline} pipeline · {point.consistency}% consistency
+                      </span>
+                      {point.highlight ? <span className="muted" style={{ fontSize: 12 }}>🌟 {point.highlight}</span> : null}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="muted">
+                No field data for {profile.name} yet. Daily field metrics appear here once this rep starts replying to scheduled
+                check-ins.
+              </p>
+            )}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

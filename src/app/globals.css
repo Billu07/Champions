@@ -22,6 +22,7 @@
   --radius-lg: 18px;
   --shadow-sm: 0 1px 2px rgba(18, 44, 27, 0.04), 0 4px 14px rgba(18, 44, 27, 0.05);
   --shadow-md: 0 6px 18px rgba(18, 44, 27, 0.08), 0 20px 44px rgba(18, 44, 27, 0.09);
+  --shadow-lg: 0 12px 32px rgba(18, 44, 27, 0.14), 0 30px 70px rgba(18, 44, 27, 0.18);
 }
 
 * {
@@ -1463,6 +1464,207 @@ details summary {
   color: var(--primary-strong);
   width: 44px;
   text-align: right;
+}
+
+button.leaderboard-row {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+button.leaderboard-row:hover {
+  background: #f4f9f5;
+  border-color: var(--border);
+}
+
+/* Make the report-card title + avatar a clickable profile trigger. */
+.profile-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.profile-trigger h2 {
+  margin: 0;
+  transition: color 0.15s ease;
+}
+
+.profile-trigger:hover h2 {
+  color: var(--primary-strong);
+}
+
+/* Recognition badges. */
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary-strong);
+  background: linear-gradient(180deg, #eef6ef 0%, #e4f0e6 100%);
+  border: 1px solid #d4e6d7;
+}
+
+/* Employee of the Week / Month spotlight. */
+.employee-of-period {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  margin: 8px 0 2px;
+  padding: 16px 16px 14px;
+  border: 1px solid #e7d9a8;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, #fffaf0 0%, #fdf3da 100%);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.employee-of-period:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.employee-of-period .avatar {
+  width: 52px;
+  height: 52px;
+  font-size: 18px;
+}
+
+.eop-ribbon {
+  position: absolute;
+  top: -10px;
+  left: 14px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #7a5a00;
+  background: linear-gradient(180deg, #ffe9a8 0%, #ffd970 100%);
+  border: 1px solid #e7c869;
+}
+
+.eop-body {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.eop-name {
+  font-size: 17px;
+}
+
+.eop-meta {
+  font-size: 12px;
+}
+
+/* Profile drill-down overlay. */
+.profile-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(16, 24, 40, 0.5);
+  backdrop-filter: blur(2px);
+}
+
+.profile-modal {
+  width: 100%;
+  max-width: 560px;
+  max-height: 86vh;
+  overflow-y: auto;
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.profile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.profile-head .avatar {
+  width: 48px;
+  height: 48px;
+  font-size: 16px;
+}
+
+.profile-day {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+/* CSS-only trend sparkline. */
+.sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 56px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, #fbfdfa 0%, #ffffff 100%);
+}
+
+.sparkline-bar {
+  flex: 1 1 0;
+  display: flex;
+  align-items: flex-end;
+  height: 100%;
+  min-width: 4px;
+}
+
+.sparkline-bar > span {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(180deg, var(--primary) 0%, var(--secondary) 100%);
+}
+
+@media (max-width: 640px) {
+  .profile-overlay {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .profile-modal {
+    max-width: 100%;
+    max-height: 92vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
 }
 
 .test-scheduler-create .pill {

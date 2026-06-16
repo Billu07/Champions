@@ -155,6 +155,7 @@ type EmployeePeriodMetrics = {
   performanceScorePct: number;
   totalReplyFragments: number;
   slotMatrix: Record<ReportSlotKey, { expected: number; replied: number; missing: number }>;
+  fieldReport?: FieldMetrics;
 };
 
 function groupBy<T>(items: T[], key: (item: T) => string): Record<string, T[]> {
@@ -172,17 +173,18 @@ function toPct(numerator: number, denominator: number): number {
 }
 
 // Blends the CEO-facing dimensions into one fair, comparable performance score.
-// Customer activity is benchmarked against the daily gold-standard visit target.
-function buildFieldMetrics(
-  repliedSlots: number,
-  expectedSlots: number,
-  extract: FieldReportExtract,
-  visitTarget: number,
-): FieldMetrics {
-  const consistencyPct = toPct(repliedSlots, expectedSlots);
+// `customerTarget` is the expected number of customer visits for the window
+// (daily target for a day, daily target x working days for a period), so the
+// same scoring is fair across daily and weekly/monthly reports.
+function composeFieldMetrics(input: {
+  consistencyPct: number;
+  extract: FieldReportExtract;
+  customerTarget: number;
+}): FieldMetrics {
+  const { consistencyPct, extract, customerTarget } = input;
   const fieldPresencePct = extract.locationShared ? 100 : 0;
-  const customerTargetPct = visitTarget > 0
-    ? Math.min(100, Number(((extract.customersVisited / visitTarget) * 100).toFixed(1)))
+  const customerTargetPct = customerTarget > 0
+    ? Math.min(100, Number(((extract.customersVisited / customerTarget) * 100).toFixed(1)))
     : 0;
   const pipelinePct = Math.min(100, extract.leads * 50); // 2+ new leads/POs = full marks
   const fieldPerformanceScore = Number(
@@ -194,13 +196,26 @@ function buildFieldMetrics(
     fieldPresencePct,
     customersReached: extract.customersVisited,
     customerTargetPct,
-    visitTarget,
+    visitTarget: customerTarget,
     pipeline: extract.leads,
     fieldPerformanceScore,
     blockers: extract.blockers,
     highlight: extract.highlight,
     summary: extract.summary,
   };
+}
+
+function buildFieldMetrics(
+  repliedSlots: number,
+  expectedSlots: number,
+  extract: FieldReportExtract,
+  visitTarget: number,
+): FieldMetrics {
+  return composeFieldMetrics({
+    consistencyPct: toPct(repliedSlots, expectedSlots),
+    extract,
+    customerTarget: visitTarget,
+  });
 }
 
 function normalizeSlotKey(raw: unknown): ReportSlotKey | null {
@@ -1000,6 +1015,7 @@ function buildTeamDailyMetrics(
       customersReached: item.fieldReport.customersReached,
       pipeline: item.fieldReport.pipeline,
       consistencyPct: item.fieldReport.consistencyPct,
+      fieldPresencePct: item.fieldReport.fieldPresencePct,
     }));
 
   return {
@@ -1122,6 +1138,50 @@ function buildTeamPeriodMetrics(input: {
       criticalSlotsExpected: member.criticalSlotsExpected,
     }));
 
+  // CEO-facing field performance over the whole period (mirrors the daily report).
+  const withField = input.members.filter((member) => member.fieldReport) as Array<
+    EmployeePeriodMetrics & { fieldReport: FieldMetrics }
+  >;
+  const avgField = (select: (field: FieldMetrics) => number) =>
+    withField.length
+      ? Number((withField.reduce((sum, item) => sum + select(item.fieldReport), 0) / withField.length).toFixed(1))
+      : 0;
+  const fieldSummary = {
+    avgFieldPerformance: avgField((field) => field.fieldPerformanceScore),
+    avgConsistencyPct: avgField((field) => field.consistencyPct),
+    fieldPresenceRatePct: avgField((field) => field.fieldPresencePct),
+    totalCustomersReached: withField.reduce((sum, item) => sum + item.fieldReport.customersReached, 0),
+    totalPipeline: withField.reduce((sum, item) => sum + item.fieldReport.pipeline, 0),
+    visitTarget: withField[0]?.fieldReport.visitTarget ?? 0,
+  };
+  const fieldRanked = [...withField].sort(
+    (a, b) => b.fieldReport.fieldPerformanceScore - a.fieldReport.fieldPerformanceScore,
+  );
+  const leaderboard = fieldRanked.slice(0, 10).map((item) => ({
+    employeeId: item.employeeId,
+    employeeName: item.employeeName,
+    fieldPerformanceScore: item.fieldReport.fieldPerformanceScore,
+    customersReached: item.fieldReport.customersReached,
+    pipeline: item.fieldReport.pipeline,
+    consistencyPct: item.fieldReport.consistencyPct,
+    fieldPresencePct: item.fieldReport.fieldPresencePct,
+  }));
+  const champion = fieldRanked[0];
+  const employeeOfPeriod = champion
+    ? {
+        employeeId: champion.employeeId,
+        employeeName: champion.employeeName,
+        periodLabel: input.kind === "team_weekly" ? "Employee of the Week" : "Employee of the Month",
+        fieldPerformanceScore: champion.fieldReport.fieldPerformanceScore,
+        customersReached: champion.fieldReport.customersReached,
+        pipeline: champion.fieldReport.pipeline,
+        consistencyPct: champion.fieldReport.consistencyPct,
+        fieldPresencePct: champion.fieldReport.fieldPresencePct,
+        visitTarget: champion.fieldReport.visitTarget,
+        highlight: champion.fieldReport.highlight,
+      }
+    : null;
+
   return {
     reportVersion: 4,
     period: {
@@ -1150,6 +1210,9 @@ function buildTeamPeriodMetrics(input: {
     slotSummary,
     topPerformers,
     atRiskMembers,
+    fieldSummary,
+    leaderboard,
+    employeeOfPeriod,
   };
 }
 
@@ -1222,6 +1285,38 @@ async function buildTeamRangeReport(input: {
   const memberMetrics = Object.entries(byEmployee).map(([employeeId, employeeRows]) =>
     buildPeriodEmployeeMetrics(employeeId, resolveEmployeeName(employeeRows[0]), employeeRows, periodDays, effectivePolicies),
   );
+
+  // Turn each rep's replies across the whole window into CEO-facing field
+  // metrics, benchmarked against the daily target scaled to the working days.
+  const periodCustomerTarget = env.SALES_DAILY_VISIT_TARGET * Math.max(1, periodDays);
+  await mapWithConcurrency(memberMetrics, 6, async (member) => {
+    const employeeRows = byEmployee[member.employeeId] ?? [];
+    const replyText = employeeRows
+      .filter((row) => !row.is_missing && String(row.merged_text ?? "").trim())
+      .map((row) => `${row.tracking_date} ${row.slot_key}: ${String(row.merged_text).trim()}`)
+      .join("\n");
+    if (!replyText) return;
+
+    try {
+      const extract = await extractFieldReport({
+        employeeName: member.employeeName,
+        date: `${input.startDate} to ${input.endDate}`,
+        replies: replyText,
+      });
+      const repliedTotal = Object.values(member.slotMatrix).reduce((sum, slot) => sum + slot.replied, 0);
+      const expectedTotal = Object.values(member.slotMatrix).reduce((sum, slot) => sum + slot.expected, 0);
+      member.fieldReport = composeFieldMetrics({
+        consistencyPct: toPct(repliedTotal, expectedTotal),
+        extract,
+        customerTarget: periodCustomerTarget,
+      });
+    } catch (error) {
+      logError(`${input.kind} field extract failed`, {
+        employeeId: member.employeeId,
+        error: (error as Error).message,
+      });
+    }
+  });
 
   const teamMetrics = buildTeamPeriodMetrics({
     kind: input.kind,
@@ -1357,7 +1452,7 @@ export async function generateDailyReports(reportDate: string) {
     teamNarrative = await summarizeReport(
       `Team daily report for ${reportDate}`,
       teamMetrics,
-      `Write in English for CEO-level review. Highlight compliance risks, semantic data quality gaps, and operational actions. ${policyInstruction}`,
+      "Write 3-5 plain-English sentences for a CEO reviewing the field-sales team today. Cover: how consistently the team reported, how present they were in the field, total customers reached versus the team target, new leads or POs, the day's standout performer, and the main thing to fix tomorrow. Do NOT use jargon like 'mandatory', 'critical', 'semantic', or 'compliance'.",
     );
   } catch (error) {
     failures.push({ reason: `Team AI summary failed: ${(error as Error).message}` });
@@ -1421,7 +1516,7 @@ export async function generateWeeklyReport(anchorDate: Date) {
     endDate: range.end,
     title: `Team weekly executive summary - ${range.start} to ${range.end}`,
     aiInstruction:
-      "Write in English as an executive weekly summary. Include semantic quality trend, concrete risks, and next-week actions.",
+      "Write 3-5 plain-English sentences for a CEO reviewing the field-sales team's week. Cover: how consistently the team reported, how present they were in the field, total customers reached versus the team target, new leads or POs, who the standout performer was, and the main thing to fix next week. Do NOT use jargon like 'mandatory', 'critical', 'semantic', or 'compliance'.",
   });
 }
 
@@ -1433,6 +1528,6 @@ export async function generateMonthlyReport(anchorDate: Date) {
     endDate: range.end,
     title: `Team monthly executive summary - ${range.start} to ${range.end}`,
     aiInstruction:
-      "Write in English as a monthly executive review. Prioritize compliance trend, semantic quality trend, structural risks, and corrective actions for next month.",
+      "Write 3-6 plain-English sentences for a CEO reviewing the field-sales team's month. Cover: reporting consistency, field presence, total customers reached versus the team target, new leads or POs, the standout performer of the month, and the priorities to improve next month. Do NOT use jargon like 'mandatory', 'critical', 'semantic', or 'compliance'.",
   });
 }
