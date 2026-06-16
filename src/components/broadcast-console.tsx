@@ -928,7 +928,10 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          originalMessage: message.trim(),
+          // Fall back to the final message when the raw input box is empty
+          // (e.g. drafted via voice / AI / pasted straight into the review box),
+          // so the server's non-empty originalMessage check doesn't reject it.
+          originalMessage: message.trim() || finalMessage,
           finalMessage,
           audienceCategory: previewAudienceCategory,
           reviewedRoutes,
