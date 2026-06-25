@@ -203,22 +203,42 @@ export async function getBusinessProfile(): Promise<BusinessProfile> {
 
 // Updates one or more business-profile fields. Accepts a profile_picture_handle
 // from uploadResumableMedia to change the photo recipients see.
+//
+// Error 131000 is Meta's generic "something went wrong" — almost always
+// transient on this endpoint — so we retry once before surfacing it with an
+// actionable message.
 export async function updateBusinessProfile(update: BusinessProfileUpdate): Promise<void> {
-  const response = await fetch(profileUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ messaging_product: "whatsapp", ...update }),
-  });
+  const attempt = async () => {
+    const response = await fetch(profileUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ messaging_product: "whatsapp", ...update }),
+    });
 
-  const json = (await response.json().catch(() => ({}))) as
-    & GraphErrorBody
-    & { success?: boolean };
+    const json = (await response.json().catch(() => ({}))) as
+      & GraphErrorBody
+      & { success?: boolean };
 
-  if (!response.ok || json.success === false) {
-    throw new Error(formatGraphError(json, "Failed to update business profile"));
+    return { okay: response.ok && json.success !== false, code: json.error?.code, json };
+  };
+
+  let result = await attempt();
+  if (!result.okay && result.code === 131000) {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    result = await attempt();
+  }
+
+  if (!result.okay) {
+    if (result.code === 131000) {
+      throw new Error(
+        "WhatsApp returned a temporary error (131000). Please try Save again. " +
+          "If it persists, use a square JPG/PNG at least 192×192px.",
+      );
+    }
+    throw new Error(formatGraphError(result.json, "Failed to update business profile"));
   }
 }
 

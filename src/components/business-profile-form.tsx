@@ -25,7 +25,32 @@ export function BusinessProfileForm({
 
   function onPhotoChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    setPreview(file ? URL.createObjectURL(file) : null);
+    if (!file) {
+      setPreview(null);
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    setStatus({ kind: "idle" });
+
+    // WhatsApp rejects photos under 192×192 (a common cause of error 131000),
+    // so catch it here before the upload round-trip.
+    const probe = new window.Image();
+    probe.onload = () => {
+      if (probe.naturalWidth < 192 || probe.naturalHeight < 192) {
+        setStatus({
+          kind: "error",
+          message: `Image is ${probe.naturalWidth}×${probe.naturalHeight}. Use one at least 192×192px (square works best).`,
+        });
+      } else if (Math.abs(probe.naturalWidth - probe.naturalHeight) > 2) {
+        setStatus({
+          kind: "error",
+          message: `Heads-up: image is ${probe.naturalWidth}×${probe.naturalHeight}. WhatsApp crops to a square, so a square image avoids cut-off. You can still save.`,
+        });
+      }
+    };
+    probe.src = url;
   }
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
