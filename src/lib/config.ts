@@ -17,6 +17,11 @@ const envSchema = z.object({
   WHATSAPP_ACCESS_TOKEN: z.string().min(1),
   WHATSAPP_VERIFY_TOKEN: z.string().min(1),
   WHATSAPP_APP_SECRET: z.string().min(1),
+  // Meta App ID — required only for the resumable upload used to set the
+  // WhatsApp business profile photo (Settings → Business Profile). Optional so
+  // the app still boots without it; the profile-photo upload errors clearly if
+  // it is missing. Find it in the Meta App Dashboard → App settings → Basic.
+  WHATSAPP_APP_ID: z.string().optional(),
   WHATSAPP_BROADCAST_TEMPLATE_NAME: z.string().default("ceo_template"),
   WHATSAPP_BROADCAST_TEMPLATE_LANGUAGE: z.string().default("en"),
   // Default template for scheduled prompts — must be a UTILITY template so
@@ -57,6 +62,7 @@ export const env = envSchema.parse({
   WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN,
   WHATSAPP_VERIFY_TOKEN: process.env.WHATSAPP_VERIFY_TOKEN,
   WHATSAPP_APP_SECRET: process.env.WHATSAPP_APP_SECRET,
+  WHATSAPP_APP_ID: process.env.WHATSAPP_APP_ID,
   WHATSAPP_BROADCAST_TEMPLATE_NAME: process.env.WHATSAPP_BROADCAST_TEMPLATE_NAME,
   WHATSAPP_BROADCAST_TEMPLATE_LANGUAGE: process.env.WHATSAPP_BROADCAST_TEMPLATE_LANGUAGE,
   WHATSAPP_SCHEDULED_TEMPLATE_NAME: process.env.WHATSAPP_SCHEDULED_TEMPLATE_NAME,

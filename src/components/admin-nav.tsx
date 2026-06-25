@@ -15,6 +15,7 @@ type IconName =
   | "conversations"
   | "reports"
   | "calendar"
+  | "settings"
   | "logout"
   | "menu"
   | "close";
@@ -32,6 +33,7 @@ const links: NavLink[] = [
   { href: "/broadcasts" as Route, label: "Broadcasts", icon: "broadcasts" },
   { href: "/conversations" as Route, label: "Conversations", icon: "conversations" },
   { href: "/reports" as Route, label: "Reports", icon: "reports" },
+  { href: "/settings" as Route, label: "Settings", icon: "settings" },
 ];
 
 if (testSchedulerEnabled) {
@@ -100,6 +102,13 @@ function NavIcon({ name, className }: { name: IconName; className?: string }) {
           <path d="M8 3v4" />
           <path d="M16 3v4" />
           <path d="M3 10h18" />
+        </>
+      ) : null}
+
+      {name === "settings" ? (
+        <>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
         </>
       ) : null}
 
