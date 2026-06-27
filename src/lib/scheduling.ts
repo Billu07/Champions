@@ -2,6 +2,7 @@
 import { env } from "@/lib/config";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { WORKING_DAYS } from "@/lib/constants";
+import { reverseGeocode } from "@/lib/geocode";
 import { logError, logInfo } from "@/lib/logger";
 import { dhakaDateISO, dhakaDayName, minuteOfDayForTimezone } from "@/lib/time";
 import type { LegacySlotKey, ReportSlotKey, WhatsAppInboundMessage } from "@/lib/types";
@@ -68,13 +69,27 @@ function summarizeFailureReasons(reasons: Map<string, number>): string {
   return ` | ${parts.join("; ")}`;
 }
 
-function formatInboundFragment(message: WhatsAppInboundMessage): string {
+async function formatInboundFragment(message: WhatsAppInboundMessage): Promise<string> {
   const text = message.text?.body?.trim() ?? "";
   if (message.type === "location" && message.location) {
-    const lat = message.location.latitude ?? "";
-    const lng = message.location.longitude ?? "";
-    const address = message.location.address ? ` | ${message.location.address}` : "";
-    const locationText = `Location: ${lat}, ${lng}${address}`;
+    const { latitude: lat, longitude: lng } = message.location;
+
+    // Prefer a readable place: WhatsApp only includes name/address when the user
+    // shares a named place, so reverse-geocode dropped pins. Coordinates are the
+    // last-resort fallback if both the message and geocoding give us nothing.
+    const provided = [message.location.name, message.location.address]
+      .map((part) => part?.trim())
+      .filter(Boolean)
+      .join(", ");
+
+    let place = provided;
+    if (!place && typeof lat === "number" && typeof lng === "number") {
+      place = (await reverseGeocode(lat, lng)) ?? "";
+    }
+
+    const fallbackCoords =
+      typeof lat === "number" && typeof lng === "number" ? `${lat}, ${lng}` : "shared a location";
+    const locationText = `Location: ${place || fallbackCoords}`;
     return text ? `${text}\n${locationText}` : locationText;
   }
 
@@ -564,7 +579,7 @@ export async function processInboundWebhookPayload(payload: Record<string, unkno
     const receivedAtIso = incomingDate.toISOString();
 
     const employee = await findEmployeeByWhatsAppFrom(message.from);
-    const fragment = formatInboundFragment(message);
+    const fragment = await formatInboundFragment(message);
     const replyContextId = inboundReplyContextId(message);
     const classification = await classifyInboundReply({
       employee,

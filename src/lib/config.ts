@@ -42,6 +42,10 @@ const envSchema = z.object({
   OPENAI_TRANSCRIBE_LANGUAGE: z.string().default("bn"),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default("gemini-flash-latest"),
+  // Optional: enables Google reverse geocoding for location-pin replies (more
+  // accurate addresses in Bangladesh). If unset, falls back to free
+  // OpenStreetMap/Nominatim, and to raw coordinates if that also fails.
+  GOOGLE_MAPS_API_KEY: z.string().optional(),
   NEXT_PUBLIC_APP_TIMEZONE: z.string().default("Asia/Dhaka"),
   NEXT_PUBLIC_ENABLE_TEST_SCHEDULER: envBoolean.default(false),
   ADMIN_LOGIN_USERNAME: z.string().min(3).default("admin"),
@@ -75,6 +79,7 @@ export const env = envSchema.parse({
   SALES_DAILY_VISIT_TARGET: process.env.SALES_DAILY_VISIT_TARGET,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   GEMINI_MODEL: process.env.GEMINI_MODEL,
+  GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY,
   NEXT_PUBLIC_APP_TIMEZONE: process.env.NEXT_PUBLIC_APP_TIMEZONE,
   NEXT_PUBLIC_ENABLE_TEST_SCHEDULER: process.env.NEXT_PUBLIC_ENABLE_TEST_SCHEDULER,
   ADMIN_LOGIN_USERNAME: process.env.ADMIN_LOGIN_USERNAME,
