@@ -37,9 +37,12 @@ const envSchema = z.object({
   // Gold-standard daily customer visits (a rep hitting this scores 100% on the
   // customer-activity dimension). Tune to the team's expectation.
   SALES_DAILY_VISIT_TARGET: z.coerce.number().min(1).default(5),
-  // Forces Whisper's language so Bengali voice notes aren't mis-detected as
-  // Hindi/Arabic. Override (e.g. "en") only if voice notes aren't Bengali.
+  // Forces the transcription language so Bengali voice notes aren't mis-detected
+  // as Hindi/Arabic. Override (e.g. "en") only if voice notes aren't Bengali.
+  // NOTE: legacy "whisper-1" rejects language="bn"; the default transcribe model
+  // below (gpt-4o-transcribe) accepts it and is far more accurate for Bengali.
   OPENAI_TRANSCRIBE_LANGUAGE: z.string().default("bn"),
+  OPENAI_TRANSCRIBE_MODEL: z.string().default("gpt-4o-transcribe"),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default("gemini-flash-latest"),
   // Optional: enables Google reverse geocoding for location-pin replies (more
@@ -76,6 +79,7 @@ export const env = envSchema.parse({
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL,
   OPENAI_TRANSCRIBE_LANGUAGE: process.env.OPENAI_TRANSCRIBE_LANGUAGE,
+  OPENAI_TRANSCRIBE_MODEL: process.env.OPENAI_TRANSCRIBE_MODEL,
   SALES_DAILY_VISIT_TARGET: process.env.SALES_DAILY_VISIT_TARGET,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   GEMINI_MODEL: process.env.GEMINI_MODEL,
