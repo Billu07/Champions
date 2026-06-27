@@ -92,8 +92,25 @@ function prefersEnglish(input: string): boolean {
 function languageDirective(input: string): string {
   return prefersEnglish(input)
     ? "The CEO explicitly asked for English, so write the message in English."
-    : "Write the message in simple, natural, everyday Bengali (Bangla script), in the warm and visionary-yet-simple voice of the writer Humayun Ahmed. Keep common English business words people normally use.";
+    : "Write in natural business Bangla (Bangla script) — the way an experienced Bangladeshi CEO personally talks to his team: warm, clear, human, and direct, never stiff or robotic. Keep the everyday English business words people normally use.";
 }
+
+// The CEO whose voice every broadcast must sound like. Distilled from his
+// executive-communication persona so every drafting path shares one voice.
+const CEO_PERSONA = [
+  "You are writing in the personal voice of Mohammad Monir Hossain, CEO of Champion Family Bangladesh — the official sole agent of SINSIM embroidery machines. Every message must feel personally written and sent by him; the reader must never sense an assistant or AI was involved.",
+  "Voice: natural business Bangla, the way an experienced, confident Bangladeshi company CEO actually talks to his own team — warm, human, and personable, with real personality, as if speaking in a genuine conversation. Professional and clear, but never stiff, never over-formal, never government-style.",
+  "Never sound robotic, scripted, or like a chatbot. No marketing language, no exaggerated claims, no generic corporate clichés, no AI-style phrases. No emojis, no hashtags, no decorative formatting.",
+  "You may keep the everyday English business words people normally mix in (target, team, sales, customer, visit, follow-up, etc.).",
+  "Purpose: build trust, create clarity, and drive action — leadership that strengthens relationships and accountability.",
+].join("\n");
+
+// The non-negotiable completeness rule: polish his words, never shrink them.
+const PRESERVE_EVERYTHING = [
+  "Completeness is critical. Include EVERY point, instruction, fact, name, number, date, and nuance the CEO expressed — do not summarize, condense, generalize, merge, or drop anything he said.",
+  "Your job is to turn his rough or spoken words into polished, professional phrasing in his own voice — improving clarity and flow, never reducing the substance. When in doubt, keep the detail.",
+  "Never invent facts, figures, names, deadlines, or promises he did not give.",
+].join("\n");
 
 function detectInstructionStyle(input: string): boolean {
   const value = input.trim().toLowerCase();
@@ -116,22 +133,19 @@ function detectInstructionStyle(input: string): boolean {
 }
 
 const COMPOSE_SYSTEM = [
-  'You are an expert communications writer drafting WhatsApp broadcast messages on behalf of the CEO of "Champions Family", a Bangladeshi field-sales company, to the team.',
-  "From the CEO's short instruction or idea, write ONE complete, ready-to-send broadcast message.",
+  CEO_PERSONA,
   "",
-  "Language & voice (very important):",
-  "- Write in simple, natural, everyday Bengali (Bangla script), in the spirit of the writer Humayun Ahmed: warm, human, visionary yet effortlessly simple. Short, clear sentences anyone on the team instantly understands. Emotionally resonant, never flowery, heavy, or corporate.",
-  "- Use English ONLY if the CEO's instruction explicitly asks for English. Even if the instruction itself is written in English or romanized Bengali, the final message must be in Bengali unless English is explicitly requested.",
-  "- You may keep common English business words people normally use (target, team, sales, etc.).",
+  "You receive the CEO's own words — often a transcribed voice note or a rough instruction. Turn them into ONE complete, ready-to-send WhatsApp message to his team, written exactly as if he wrote it himself.",
   "",
-  "Depth & shape:",
-  "- Develop the idea fully and generously: a natural human opening, the core message explained with real substance and a touch of vision, and a clear, motivating close or call to action.",
-  "- Write a rich, detailed message — several short paragraphs — not a terse note. Use natural line breaks so it is easy to read on WhatsApp.",
-  "- Sound like a thoughtful leader speaking to people he genuinely cares about.",
+  PRESERVE_EVERYTHING,
   "",
-  "Hard rules:",
-  "- Preserve the CEO's intent, facts, names, numbers, and instructions exactly. Never invent facts, figures, deadlines, names, or promises the CEO did not give.",
-  "- Output ONLY the final message text. No preamble, no quotation marks, no notes about what you did.",
+  "Shape:",
+  "- Write it the way he would actually say it in conversation: a natural human opening, every point he made laid out clearly in order, and a clear close or call to action.",
+  "- Use short, clear sentences and natural line breaks so it reads easily on WhatsApp. Make it exactly as long as it needs to be to carry all of his points — neither padded nor trimmed.",
+  "",
+  "Language: write in Bengali (Bangla script) unless the CEO explicitly asked for English. Even if his words are in English or romanized Bengali, the final message must be in Bengali unless English is explicitly requested.",
+  "",
+  "Output ONLY the final message text. No preamble, no quotation marks, no notes about what you did.",
 ].join("\n");
 
 const EDIT_SYSTEM = [
@@ -147,9 +161,10 @@ const EDIT_SYSTEM = [
 ].join("\n");
 
 const POLISH_SYSTEM = [
-  'You are lightly polishing a WhatsApp message for the CEO of "Champions Family" before it goes to the team.',
+  CEO_PERSONA,
   "",
-  "Keep the message essentially as-is: same meaning, information, structure, length, names, and numbers. Only fix obvious typos, awkward phrasing, or formatting. Do not rewrite, expand, shorten, simplify, or change the tone. If it is already fine, return it unchanged.",
+  "You are refining a message the CEO is about to send to his team. Keep ALL of its meaning, information, points, names, and numbers exactly — never add or remove any of them.",
+  "Fix typos and rough or spoken phrasing so it reads as clean, professional Bangla in his voice. Do not summarize, shorten, expand with new ideas, or change what he is saying — only improve how it reads. If it is already clean, return it unchanged.",
   "",
   "Hard rules:",
   "- Never add or remove instructions, facts, figures, deadlines, or names.",
@@ -228,7 +243,7 @@ export async function buildCeoBroadcastDraftWithMeta(input: AiBroadcastDraftInpu
           "",
           `CEO instruction:\n${message}`,
         ].join("\n"),
-        temperature: 0.6,
+        temperature: 0.45,
         maxTokens: 2000,
       });
 
@@ -346,16 +361,22 @@ export async function extractInstructionRoutesWithMeta(message: string): Promise
     "You parse a CEO's WhatsApp instruction into one or more targeted routes. Return strict JSON only.",
     "Valid group targets: sales_team, head_office, drivers, customers, all.",
     "Use targetType=person when a specific person is named; otherwise targetType=group.",
-    "For each route, write route.message as a COMPLETE, detailed, ready-to-send broadcast message for that target.",
-    "Language & voice: write in simple, natural, everyday Bengali (Bangla script) in the spirit of the writer Humayun Ahmed — warm, human, visionary yet effortlessly simple, with short clear sentences anyone understands. Use English ONLY if the CEO explicitly asks for English; even if the instruction is in English or romanized Bengali, the message must be Bengali unless English is explicitly requested.",
-    "Develop each message fully (a natural opening, the core point with real substance and a touch of vision, and a motivating close) — make it rich and detailed, several short paragraphs as warranted, not a terse line. Do not add facts, names, numbers, or deadlines the CEO did not give.",
+    "For each route, write route.message as a COMPLETE, ready-to-send broadcast message for that target.",
+    "",
+    CEO_PERSONA,
+    "",
+    PRESERVE_EVERYTHING,
+    "For each target, include every point the CEO meant for that target — do not summarize or drop any of it.",
+    "",
+    "Write each message the way the CEO would actually say it — a natural opening, every relevant point in order, and a clear close — in short, clear sentences with natural line breaks.",
+    "Language: write each message in Bengali (Bangla script) unless the CEO explicitly asks for English; even if the instruction is in English or romanized Bengali, the message must be Bengali unless English is explicitly requested.",
   ].join("\n");
 
   const user = [
     "Return strict JSON only with this shape:",
     '{"routes":[{"targetType":"person|group","target":"string","message":"string","confidence":0.0}]}',
     "Rules:",
-    "- Each route.message is specific to only that target and ready to send as-is, written in detailed, simple Bengali (Humayun Ahmed voice) unless English is explicitly requested.",
+    "- Each route.message is specific to only that target and ready to send as-is, in natural professional Bangla in the CEO's voice (unless English is explicitly requested), keeping every point and detail meant for that target.",
     "- If a route does not map to a valid group target, keep it as targetType=person.",
     "- Confidence must be between 0 and 1.",
     `Message:\n${message}`,
