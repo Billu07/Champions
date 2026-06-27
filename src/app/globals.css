@@ -426,6 +426,206 @@ a {
   font-size: 13px;
 }
 
+/* --- Voice note: recording + AI processing animations (mobile-first) --- */
+.voice-actions {
+  align-items: center;
+}
+
+.voice-record-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-mic-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #dc2626;
+  flex: 0 0 auto;
+  animation: rec-pulse 1.6s ease-in-out infinite;
+}
+
+.voice-recording {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(220, 38, 38, 0.28);
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.voice-rec-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #dc2626;
+  flex: 0 0 auto;
+  animation: rec-pulse 1.3s ease-in-out infinite;
+}
+
+.voice-wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1 1 auto;
+  height: 30px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.voice-wave span {
+  display: block;
+  width: 3px;
+  height: 6px;
+  border-radius: 3px;
+  background: #dc2626;
+  animation-name: voice-wave;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+.voice-rec-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: #b91c1c;
+  flex: 0 0 auto;
+  min-width: 42px;
+  text-align: right;
+}
+
+.voice-stop {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 10px;
+  background: #dc2626;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.voice-stop::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: #fff;
+}
+
+.voice-stop:hover {
+  background: #b91c1c;
+}
+
+.voice-processing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(15, 122, 61, 0.05);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* three bouncing dots — inline transcription indicator */
+.ai-dots {
+  display: inline-flex;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+.ai-dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: ai-dot 1.2s ease-in-out infinite;
+}
+
+.ai-dots span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.ai-dots span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+/* equalizer waveform in the processing overlay card */
+.ai-wave {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  height: 40px;
+  margin-bottom: 4px;
+}
+
+.ai-wave span {
+  display: block;
+  width: 4px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--primary);
+  animation-name: voice-wave;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+@keyframes voice-wave {
+  0%, 100% {
+    height: 6px;
+    opacity: 0.6;
+  }
+  50% {
+    height: 26px;
+    opacity: 1;
+  }
+}
+
+@keyframes rec-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.5);
+  }
+  50% {
+    transform: scale(0.82);
+    box-shadow: 0 0 0 7px rgba(220, 38, 38, 0);
+  }
+}
+
+@keyframes ai-dot {
+  0%, 100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  50% {
+    transform: translateY(-6px);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-wave span,
+  .ai-wave span,
+  .ai-dots span,
+  .voice-rec-dot,
+  .voice-mic-dot {
+    animation: none;
+  }
+  .voice-wave span,
+  .ai-wave span {
+    height: 16px;
+  }
+}
+
 .conversation-shell {
   display: grid;
   gap: 14px;

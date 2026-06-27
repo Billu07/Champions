@@ -328,8 +328,30 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
 
   const [isRecording, setIsRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [recSeconds, setRecSeconds] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Deterministic, organic-looking bar timings for the recording waveform and
+  // the AI-processing animation (pure CSS — no audio analysis needed).
+  const waveBars = useMemo(
+    () =>
+      Array.from({ length: 28 }, (_, i) => ({
+        delay: (((i * 7) % 13) * 0.06).toFixed(2),
+        duration: (0.6 + ((i * 5) % 7) * 0.08).toFixed(2),
+      })),
+    [],
+  );
+
+  // Stop the recording timer if the component unmounts mid-record.
+  useEffect(() => () => {
+    if (recTimerRef.current) clearInterval(recTimerRef.current);
+  }, []);
+
+  // The voice pipeline keeps the user informed across two phases: Whisper
+  // transcription, then GPT drafting. Both should feel alive, never stuck.
+  const aiBusy = transcribing || previewing || sending;
   const audioInputRef = useRef<HTMLInputElement | null>(null);
 
   // Transcribe a recorded/uploaded voice note via Whisper and append the text to
@@ -383,6 +405,8 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       recorder.start();
       mediaRecorderRef.current = recorder;
       setIsRecording(true);
+      setRecSeconds(0);
+      recTimerRef.current = setInterval(() => setRecSeconds((value) => value + 1), 1000);
       setStatus("Recording... tap Stop when finished.");
     } catch {
       pushToast("error", "Microphone blocked", "Allow microphone access to record a voice note.");
@@ -390,6 +414,10 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
   };
 
   const stopRecording = () => {
+    if (recTimerRef.current) {
+      clearInterval(recTimerRef.current);
+      recTimerRef.current = null;
+    }
     mediaRecorderRef.current?.stop();
     mediaRecorderRef.current = null;
     setIsRecording(false);
@@ -1056,8 +1084,8 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       <article className="panel status-banner broadcast-status-banner">
         <div className="inline" style={{ justifyContent: "space-between", width: "100%" }}>
           <div className="inline">
-            {busy ? <span className="status-spinner" aria-hidden="true" /> : null}
-            <strong>{sending ? "Sending..." : previewing ? "Generating Preview..." : "Broadcast Status"}</strong>
+            {aiBusy ? <span className="status-spinner" aria-hidden="true" /> : null}
+            <strong>{sending ? "Sending..." : transcribing ? "Transcribing..." : previewing ? "Drafting message..." : "Broadcast Status"}</strong>
           </div>
           <span className="muted">{status}</span>
         </div>
@@ -1082,34 +1110,61 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
             <span className="muted">
               You can write exact broadcast text or simply instruct AI to draft it for you.
             </span>
-            <div className="inline" style={{ gap: 8, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="ghost"
-                onClick={() => {
-                  if (isRecording) stopRecording();
-                  else void startRecording();
-                }}
-                disabled={transcribing}
-              >
-                {isRecording ? "⏹ Stop recording" : "🎙 Record voice note"}
-              </button>
-              <button
-                type="button"
-                className="ghost"
-                onClick={() => audioInputRef.current?.click()}
-                disabled={isRecording || transcribing}
-              >
-                {transcribing ? "Transcribing..." : "Upload audio"}
-              </button>
-              <input
-                ref={audioInputRef}
-                type="file"
-                accept="audio/*"
-                style={{ display: "none" }}
-                onChange={onPickAudioFile}
-              />
-            </div>
+            {isRecording ? (
+              <div className="voice-recording" role="status" aria-live="polite">
+                <span className="voice-rec-dot" aria-hidden="true" />
+                <div className="voice-wave" aria-hidden="true">
+                  {waveBars.map((bar, index) => (
+                    <span
+                      key={index}
+                      style={{ animationDelay: `${bar.delay}s`, animationDuration: `${bar.duration}s` }}
+                    />
+                  ))}
+                </div>
+                <span className="voice-rec-time">
+                  {Math.floor(recSeconds / 60)}:{String(recSeconds % 60).padStart(2, "0")}
+                </span>
+                <button type="button" className="voice-stop" onClick={() => stopRecording()}>
+                  Stop
+                </button>
+              </div>
+            ) : transcribing ? (
+              <div className="voice-processing" role="status" aria-live="polite">
+                <span className="ai-dots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                <span>Transcribing your voice note…</span>
+              </div>
+            ) : (
+              <div className="inline voice-actions" style={{ gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="ghost voice-record-btn"
+                  onClick={() => void startRecording()}
+                  disabled={busy}
+                >
+                  <span className="voice-mic-dot" aria-hidden="true" />
+                  Record voice note
+                </button>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => audioInputRef.current?.click()}
+                  disabled={busy}
+                >
+                  Upload audio
+                </button>
+              </div>
+            )}
+            <input
+              ref={audioInputRef}
+              type="file"
+              accept="audio/*"
+              style={{ display: "none" }}
+              onChange={onPickAudioFile}
+            />
           </label>
 
           <article className="panel grid broadcast-audience" style={{ gap: 10 }}>
@@ -1510,12 +1565,32 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
         </div>
       ) : null}
 
-      {busy ? (
+      {aiBusy ? (
         <div className="broadcast-busy-overlay" aria-live="polite">
           <div className="broadcast-busy-card">
-            <span className="status-spinner status-spinner-lg" aria-hidden="true" />
-            <strong>{previewing ? "Generating preview" : "Sending broadcast"}</strong>
-            <p>{previewing ? "AI is preparing a structured preview..." : "Your broadcast is being queued now..."}</p>
+            <div className="ai-wave" aria-hidden="true">
+              {waveBars.map((bar, index) => (
+                <span
+                  key={index}
+                  style={{ animationDelay: `${bar.delay}s`, animationDuration: `${bar.duration}s` }}
+                />
+              ))}
+            </div>
+            <strong>
+              {transcribing
+                ? "Transcribing voice note"
+                : sending
+                  ? "Sending broadcast"
+                  : "Drafting your message"}
+            </strong>
+            <p>
+              {status ||
+                (transcribing
+                  ? "Converting your voice to text…"
+                  : sending
+                    ? "Your broadcast is being queued now…"
+                    : "AI is writing the message in the CEO's voice…")}
+            </p>
           </div>
         </div>
       ) : null}
