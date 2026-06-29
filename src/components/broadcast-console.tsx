@@ -57,7 +57,6 @@ type BroadcastFailureSummary = {
 
 type BroadcastConsoleProps = {
   initialEmployees: Employee[];
-  templateName: string;
 };
 
 type TargetMode = "mixed" | "group" | "custom";
@@ -293,7 +292,7 @@ function draftModeLabel(preview: PreviewResponse | null): string {
   return "AI refined";
 }
 
-export function BroadcastConsole({ initialEmployees, templateName }: BroadcastConsoleProps) {
+export function BroadcastConsole({ initialEmployees }: BroadcastConsoleProps) {
   const [message, setMessage] = useState("");
   const [targetMode, setTargetMode] = useState<TargetMode>("mixed");
   const [groupAudience, setGroupAudience] = useState<GroupAudience>("all");
@@ -1094,7 +1093,6 @@ export function BroadcastConsole({ initialEmployees, templateName }: BroadcastCo
       <article className="card grid broadcast-station" style={{ gap: 14 }}>
         <div className="inline" style={{ justifyContent: "space-between" }}>
           <h2>CEO Broadcast Station</h2>
-          <span className="pill">Template: {templateName}</span>
         </div>
 
         <form className="grid broadcast-form" onSubmit={onPreview} style={{ gap: 14 }}>
