@@ -112,6 +112,15 @@ const PRESERVE_EVERYTHING = [
   "Never invent facts, figures, names, deadlines, or promises he did not give.",
 ].join("\n");
 
+// Each broadcast is delivered to one person at a time, behind a template that
+// already greets them by name — so the drafted body must read one-to-one, with
+// no group address and no greeting of its own.
+const ONE_TO_ONE = [
+  "This message is delivered to each person individually, and the delivery template already greets them personally by name (e.g. \"হ্যালো Rahim,\"). Therefore:",
+  "- Write it as a direct, one-to-one message to a single team member, addressing the reader personally with singular \"you\" (তুমি). Never use group address like \"everyone\", \"all of you\", \"সবাই\", \"আপনারা\", or \"team\" — even when the CEO's intent is for the whole team, phrase it as if speaking to that one person.",
+  "- Do NOT open with any greeting, salutation, or name of your own (no \"Dear Sales Team\", \"প্রিয় টিম\", \"হ্যালো\", \"সবাইকে শুভেচ্ছা\", etc.). A greeting here duplicates the template's greeting and feels odd in a personal message. Start directly with the substance.",
+].join("\n");
+
 function detectInstructionStyle(input: string): boolean {
   const value = input.trim().toLowerCase();
   if (!value) return false;
@@ -139,8 +148,10 @@ const COMPOSE_SYSTEM = [
   "",
   PRESERVE_EVERYTHING,
   "",
+  ONE_TO_ONE,
+  "",
   "Shape:",
-  "- Write it the way he would actually say it in conversation: a natural human opening, every point he made laid out clearly in order, and a clear close or call to action.",
+  "- Open directly with the substance (no salutation), lay out every point he made clearly in order, and end with a clear close or call to action.",
   "- Use short, clear sentences and natural line breaks so it reads easily on WhatsApp. Make it exactly as long as it needs to be to carry all of his points — neither padded nor trimmed.",
   "",
   "Language: write in Bengali (Bangla script) unless the CEO explicitly asked for English. Even if his words are in English or romanized Bengali, the final message must be in Bengali unless English is explicitly requested.",
@@ -368,7 +379,9 @@ export async function extractInstructionRoutesWithMeta(message: string): Promise
     PRESERVE_EVERYTHING,
     "For each target, include every point the CEO meant for that target — do not summarize or drop any of it.",
     "",
-    "Write each message the way the CEO would actually say it — a natural opening, every relevant point in order, and a clear close — in short, clear sentences with natural line breaks.",
+    ONE_TO_ONE,
+    "",
+    "Write each message the way the CEO would actually say it — open directly with the substance (no salutation), every relevant point in order, and a clear close — in short, clear sentences with natural line breaks.",
     "Language: write each message in Bengali (Bangla script) unless the CEO explicitly asks for English; even if the instruction is in English or romanized Bengali, the message must be Bengali unless English is explicitly requested.",
   ].join("\n");
 
